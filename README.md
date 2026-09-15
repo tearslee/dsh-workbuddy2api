@@ -297,6 +297,7 @@ pwsh -File scripts/migrate-settings.ps1
 - **`global:` 模型的元数据是占位值。** 上游 `modelList()` 的 global 分支把 `context_length` 硬编码为 `131072`，且下发 `max_output_tokens` 与 `supports_images`。所以国际版模型的窗口/输出上限**不是真实值**。CN 侧无此问题（走动态拉取）。
 - **无账号时网关"启动 ≠ 可用"。** 进程起来但 `/healthz` 报 `healthy: 0`，插件会把状态标为「运行中（无可用账号）」而不是假装成功。
 - **不做按需 `go build`。** 本版要求你自行准备好二进制（`binaryPath` 或 `repoPath` + 自动探测）。构建编排留待后续。
+- **模型不出现在「设置 → 模型」页，只在聊天窗口的模型选择器里。** 这是 dsh 的既定设计，不是本插件的缺陷。设置页本质是**配置文件编辑器**：`dsh-client-ui-settings-models` 的 `layoutOf()` 只认 `llm-deepseek` 与 `llm-pi-ai` 两个 settings namespace，其余一律落到未知分支、不渲染 provider 行。本插件的 provider 是**代码注册的运行时路由**（`ctx.llm.registerAdapter` + 运行时 `listModels()`），模型目录来自网关 `/v1/models`，本就不属于那个界面的管辖范围；dsh 自己的包文档也是这么定义的 —— *"stays visible in pickers but not on this page's rows"*。要确认模型可用：看聊天窗口的模型选择器，或执行 `/wb2api-status`。
 
 ---
 
