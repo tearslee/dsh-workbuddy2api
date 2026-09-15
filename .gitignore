@@ -1,5 +1,6 @@
 node_modules/
 lib/
+dist/
 *.tsbuildinfo
 
 # 本地网关源码克隆 / Go 构建产物（由插件按 repoPath 惰性构建，不入库）
