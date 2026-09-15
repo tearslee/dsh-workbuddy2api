@@ -6,6 +6,68 @@
 
 ---
 
+## 为什么这个插件重要：轮级聚合，让一次对话只有一个 RequestID
+
+如果你曾在 [腾讯 CodeBuddy 后台用量明细](https://www.codebuddy.cn/admin/usage/detail) 里看到**一次对话被拆成几十上百条记录**，那就是上游的 RequestID 碎片化。
+
+正常直连 CodeBuddy 时，一次对话只产生 **1 个** RequestID；经网关转发后却变成几十上百个。这是同一个问题在三个阶段的实测截图：
+
+**① 修复前** —— 上游后台把一次对话拆成无数次小请求
+
+<img src="https://raw.githubusercontent.com/tearslee/dsh-workbuddy2api/main/docs/images/before-fragmented.png" alt="修复前：同一请求在上游后台被拆分为几十上百个 RequestID" width="100%">
+
+**② 上游第一次修复后** —— 加了会话头族，**但仍然是多个请求**（因为 OpenAI 兼容客户端不带 `conversationId`）
+
+<img src="https://raw.githubusercontent.com/tearslee/dsh-workbuddy2api/main/docs/images/after-upstream-fix-still-fragmented.png" alt="上游第一次修复后仍然碎片化" width="100%">
+
+**③ PR #73 合并后** —— 按对话轮聚合，一次对话轮一个 RequestID
+
+<img src="https://raw.githubusercontent.com/tearslee/dsh-workbuddy2api/main/docs/images/after-pr-fixed-1.png" alt="修复后：RequestID 按对话轮聚合" width="100%">
+
+<img src="https://raw.githubusercontent.com/tearslee/dsh-workbuddy2api/main/docs/images/after-pr-fixed-2.png" alt="修复后：用量明细按轮聚合" width="100%">
+
+（截图取自上游 issue [#35](https://github.com/Sliverkiss/workbuddy2api/issues/35) 与 [#69](https://github.com/Sliverkiss/workbuddy2api/issues/69)。）
+
+### 这个 bug 是怎么修的
+
+1. **上游先加会话头族**（`X-Conversation-ID` / `X-Conversation-Request-ID` / `X-Request-ID` / B3 trace 族），后台改按 `X-Conversation-Request-ID` 聚合。
+2. **但没修好** —— 因为 OpenAI 兼容客户端（dsh / Codex / Cherry Studio）的请求体里**既无 `conversationId` 也无 `metadata`**，网关的 `ExtractKey` 恒返回空串，聚合主键只能逐请求新生成。当时的截图（issue #69 里回复「更新后我发现其实还是多个请求」）：见上方 **②**。
+3. **本仓库作者提交的 [PR #73](https://github.com/Sliverkiss/workbuddy2api/pull/73)（已合并）** 补上了缺失的那一层：为**无会话键客户端**增加「对话轮级」兜底聚合键：
+
+   ```
+   TurnKey(body) = body 里最后一条 role=="user" 消息的「序号:文本」
+   TurnRequestID(turnKey) = sha256(盐|turnKey) 前 16 字节 hex
+   ```
+
+   取**最后一条**而非第一条：首条在整个会话内不变，会把一次会话的所有轮并成一个键；序号入键：两轮里内容相同的提问（"继续"）不会被混并。于是**一次用户发送内的所有上游调用**（tool call 多轮 / 换号重试 / 降级重发）共享同一个 ID，用户发下一条消息自动换键。
+
+   > 上游随后在 `edfbf06` 里把会话级与轮级的派生收敛到同一个盐，消除了重复实现。
+
+### 这跟本插件有什么关系
+
+**有关系，而且是关键的一环。** `TurnKey` 的输入是**适配器实际发出去的请求体**。它的规则是「最后一条 `role=="user"` 消息」，于是插件侧有两条隐含前提，一旦破坏就会让碎片化**静默复发**（网关照常回包，只有腾讯后台的用量明细能看出问题）：
+
+| 前提 | 为什么 | 插件怎么做 |
+|---|---|---|
+| 工具结果**不能**以 `role:"user"` 上线 | harness 把 tool-result 搭载在 **user 角色**消息里。若原样发出，`TurnKey` 会取到「工具输出」那条（每轮都变）→ 键每轮漂移 → 碎片化复发 | 展开为独立的 `role:"tool"` 消息，于是「最后一条 user」仍是用户真正的那句话 |
+| 末条用户文本在轮内**逐字不变** | 轮内会不断追加 assistant/tool 消息；若用户那句话被改写或挪位，同轮各 step 会各拿一个键 | 序列化时不动用户消息的内容与顺序 |
+
+这两条都在 `tests/unit/turn-key-contract.spec.ts` 里用**与 Go 侧同构的取键规则**做了断言（跨语言契约测试），并且验证过：把 `role:'tool'` 改回 `role:'user'` 会让 8 个测试立刻失败。
+
+更进一步，`tools/turnkey-verify/` 把适配器**真实产出的请求体**喂给**上游真实的 Go 实现**跑一遍，得到端到端证据 —— 一次对话轮内三个 step 派生出**完全相同**的聚合 ID：
+
+```
+A-step1        key=u0:跑一下        id=6a0edaa54b38c3473703e66325edde74
+A-step2        key=u0:跑一下        id=6a0edaa54b38c3473703e66325edde74
+A-step3        key=u0:跑一下        id=6a0edaa54b38c3473703e66325edde74
+```
+
+用法见 [tools/turnkey-verify/README.md](tools/turnkey-verify/README.md)。
+
+> 换句话说：**PR #73 修的是网关侧「没有键」的问题；本插件保证那个键在 dsh 这条链路上真的稳定。**
+
+---
+
 ## 它解决什么
 
 直接用手工配置把 workbuddy2api 接进 dsh（在 `~/.dsh/settings.yaml` 写 `llm-pi-ai.providers.workbuddy2api`）能用，但有三处手工负担：
@@ -16,7 +78,7 @@
 | **进程管理** | dsh 启动前必须另行常驻 `wb2api-server.exe`，退出也不联动 | 插件托管子进程，生命周期绑定 dsh |
 | **可分发** | 配置只存在于本机，别人拿不到 | 一个 npm 包，装上即可用 |
 
-关键前提：workbuddy2api 的 `/v1/models` **已经透出全部元数据**（`internal/server/handler.go` 的 `modelList()`，见上游 issue #84）。插件不需要内置静态兜底表，也不需要给上游提 PR。
+关键前提：workbuddy2api 的 `/v1/models` **已经透出全部元数据**（`internal/server/handler.go` 的 `modelList()`，见上游 issue #84）。因此模型元数据这块插件不需要内置静态兜底表，也不需要为它给上游提 PR。
 
 ### 字段映射
 
@@ -272,12 +334,14 @@ node node_modules/vitest/vitest.mjs run --config vitest.e2e.config.ts
 | `src/gateway-adapter.ts` | `LlmAdapter` 实现：请求组装 + SSE → `StreamChunk` |
 | `src/gateway-supervisor.ts` | 子进程托管：探测、spawn、探活、重启、回收 |
 | `src/sse.ts` | SSE 空闲超时读取、工具参数归一化、孤儿工具配对清理 |
-| `docs/` | 设计交接文档 |
+| `tests/unit/turn-key-contract.spec.ts` | 轮级聚合键的跨语言契约（见上文） |
+| `docs/` | 设计交接文档与截图 |
 
 ### 为什么有几处写法看起来"多余"
 
 这些都有具体原因，改动前请先读对应注释：
 
+- **工具结果必须发成 `role:"tool"`** —— harness 把结果搭载在 user 角色消息里，原样发出会让网关的 `TurnKey` 取到工具输出、每个 step 换一个聚合键，**RequestID 碎片化因此静默复发**。详见上文与 `tests/unit/turn-key-contract.spec.ts`。
 - **`Config` 必须用 `Schema.object({...})` 构造** —— `settings.describe()` 会对每个注册项调用 `schema.toJSON()`，传裸函数会抛 `TypeError`，连带让模型设置页、主题、sidebar 的 settings API 全部失效（见 `src/config.ts`）。
 - **SSE 按 `\n` 切行而不是 `\n\n` 切事件** —— 网关一帧 = 一行 `data:`。
 - **工具 `id` 靠 Map 按 `index` 复用** —— 只有首个分片带 `id`。

@@ -1,0 +1,272 @@
+[
+  {
+    "name": "A-step1",
+    "body": {
+      "model": "cn:glm-5.2",
+      "stream": true,
+      "messages": [
+        {
+          "role": "user",
+          "content": "跑一下"
+        }
+      ]
+    }
+  },
+  {
+    "name": "A-step2",
+    "body": {
+      "model": "cn:glm-5.2",
+      "stream": true,
+      "messages": [
+        {
+          "role": "user",
+          "content": "跑一下"
+        },
+        {
+          "role": "assistant",
+          "content": null,
+          "tool_calls": [
+            {
+              "id": "c1",
+              "type": "function",
+              "function": {
+                "name": "pwsh",
+                "arguments": "{}"
+              }
+            }
+          ]
+        },
+        {
+          "role": "tool",
+          "tool_call_id": "c1",
+          "content": "结果一"
+        }
+      ]
+    }
+  },
+  {
+    "name": "A-step3",
+    "body": {
+      "model": "cn:glm-5.2",
+      "stream": true,
+      "messages": [
+        {
+          "role": "user",
+          "content": "跑一下"
+        },
+        {
+          "role": "assistant",
+          "content": null,
+          "tool_calls": [
+            {
+              "id": "c1",
+              "type": "function",
+              "function": {
+                "name": "pwsh",
+                "arguments": "{}"
+              }
+            }
+          ]
+        },
+        {
+          "role": "tool",
+          "tool_call_id": "c1",
+          "content": "结果一"
+        },
+        {
+          "role": "assistant",
+          "content": null,
+          "tool_calls": [
+            {
+              "id": "c2",
+              "type": "function",
+              "function": {
+                "name": "read",
+                "arguments": "{}"
+              }
+            }
+          ]
+        },
+        {
+          "role": "tool",
+          "tool_call_id": "c2",
+          "content": "结果二-和上一次不同"
+        }
+      ]
+    }
+  },
+  {
+    "name": "B-step1",
+    "body": {
+      "model": "cn:glm-5.2",
+      "stream": true,
+      "messages": [
+        {
+          "role": "user",
+          "content": "跑一下"
+        },
+        {
+          "role": "assistant",
+          "content": null,
+          "tool_calls": [
+            {
+              "id": "c1",
+              "type": "function",
+              "function": {
+                "name": "pwsh",
+                "arguments": "{}"
+              }
+            }
+          ]
+        },
+        {
+          "role": "tool",
+          "tool_call_id": "c1",
+          "content": "结果一"
+        },
+        {
+          "role": "assistant",
+          "content": null,
+          "tool_calls": [
+            {
+              "id": "c2",
+              "type": "function",
+              "function": {
+                "name": "read",
+                "arguments": "{}"
+              }
+            }
+          ]
+        },
+        {
+          "role": "tool",
+          "tool_call_id": "c2",
+          "content": "结果二-和上一次不同"
+        },
+        {
+          "role": "user",
+          "content": "再跑一下"
+        }
+      ]
+    }
+  },
+  {
+    "name": "C-step1",
+    "body": {
+      "model": "cn:glm-5.2",
+      "stream": true,
+      "messages": [
+        {
+          "role": "user",
+          "content": "跑一下"
+        },
+        {
+          "role": "assistant",
+          "content": null,
+          "tool_calls": [
+            {
+              "id": "c1",
+              "type": "function",
+              "function": {
+                "name": "pwsh",
+                "arguments": "{}"
+              }
+            }
+          ]
+        },
+        {
+          "role": "tool",
+          "tool_call_id": "c1",
+          "content": "结果一"
+        },
+        {
+          "role": "assistant",
+          "content": null,
+          "tool_calls": [
+            {
+              "id": "c2",
+              "type": "function",
+              "function": {
+                "name": "read",
+                "arguments": "{}"
+              }
+            }
+          ]
+        },
+        {
+          "role": "tool",
+          "tool_call_id": "c2",
+          "content": "结果二-和上一次不同"
+        },
+        {
+          "role": "user",
+          "content": "再跑一下"
+        },
+        {
+          "role": "assistant",
+          "content": null,
+          "tool_calls": [
+            {
+              "id": "c3",
+              "type": "function",
+              "function": {
+                "name": "pwsh",
+                "arguments": "{}"
+              }
+            }
+          ]
+        },
+        {
+          "role": "tool",
+          "tool_call_id": "c3",
+          "content": "ok"
+        },
+        {
+          "role": "user",
+          "content": "跑一下"
+        }
+      ]
+    }
+  },
+  {
+    "name": "D-multimodal",
+    "body": {
+      "model": "cn:glm-5.2",
+      "stream": true,
+      "messages": [
+        {
+          "role": "user",
+          "content": "看这张图"
+        }
+      ]
+    }
+  },
+  {
+    "name": "E-no-user",
+    "body": {
+      "model": "cn:glm-5.2",
+      "stream": true,
+      "messages": [
+        {
+          "role": "assistant",
+          "content": null,
+          "tool_calls": [
+            {
+              "id": "c1",
+              "type": "function",
+              "function": {
+                "name": "pwsh",
+                "arguments": "{}"
+              }
+            }
+          ]
+        },
+        {
+          "role": "tool",
+          "tool_call_id": "c1",
+          "content": "结果"
+        }
+      ]
+    }
+  }
+]
