@@ -94,15 +94,19 @@ dsh plugin --profile web add file:./dsh-workbuddy2api-0.1.0.tgz
 
 ## ⚠️ 迁移：先删掉冲突的旧配置
 
-插件注册 `workbuddy2api` 路由后，如果 `~/.dsh/settings.yaml` 里还留着同名 provider，dsh 启动会报：
+插件注册 `workbuddy2api` 路由后，如果 `~/.dsh/settings.yaml` 里还留着同名 provider，启动日志会出现：
 
 ```
-an adapter for provider "workbuddy2api" is already registered
+[workbuddy2api] provider 目录注册被拒：configurable provider "workbuddy2api" is already declared
+[workbuddy2api] 适配器注册被拒（DUPLICATE_ADAPTER）：an adapter for provider "workbuddy2api" is already registered
+[workbuddy2api] provider 路由 "workbuddy2api" 由外部配置占用（见上条）。请删除 ...
 ```
 
-（错误码是 `DUPLICATE_ADAPTER`，但消息里不含这串字，排障时认这句话。）
+**dsh 仍会正常启动**（插件故意不把冲突抛出去，避免把一个本来可用的环境弄成起不来）：
+此时模型请求走的是 `settings.yaml` 里那份手工配置，本插件的自动元数据不会生效。
+`/wb2api-status` 也会显示这条警告。
 
-从 `~/.dsh/settings.yaml` **删除整段**（连同它下面那 20 个模型的元数据）：
+从 `~/.dsh/settings.yaml` **删除整段**（连同它下面那 20 个模型的元数据）后重启即可：
 
 ```yaml
 llm-pi-ai:
@@ -251,6 +255,7 @@ node node_modules/vitest/vitest.mjs run --config vitest.e2e.config.ts
 - **`function.name` 只在非空时更新** —— 后续分片带 `""`（不是 `undefined`），直接覆盖会导致 `unknown tool ""`。
 - **残缺工具参数报 `max-tokens` 而不是 `tool-calls`** —— 报 `tool-calls` 会让 harness 执行半截 JSON 并把脏参数写进会话历史，报 `max-tokens` 才会丢弃并重试。
 - **`readWithIdleTimeout` 的 abort 分支也要 reject** —— 只清定时器会让 `Promise.race` 永远悬空，generator 既不产出也不返回。
+- **provider 注册冲突只记日志、不抛错** —— 冲突意味着用户还没迁移旧配置，此时抛错会让 dsh 起不来，把一个可用环境变成完全不可用。
 
 ---
 

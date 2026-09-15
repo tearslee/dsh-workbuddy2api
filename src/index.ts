@@ -161,8 +161,25 @@ function readApiKeyFromGatewayConfig(config: GatewayPluginConfig): string | unde
 
 
 
-/** 把状态快照渲染成命令输出文本。 */
-function renderStatus(status: Awaited<ReturnType<GatewaySupervisor['statusWithHealth']>>, authFiles: number): string {
+/**
+ * 记录一次「provider 路由被外部配置占用」的注册失败。
+ *
+ * 两种占用的实际报错不同（目录声明 vs 适配器），但排障动作完全一样，
+ * 所以统一在这里附带迁移指引，避免两处文案漂移。
+ *
+ * @param ctx - 插件上下文（取 logger）。
+ * @param what - 失败的是哪一步（'provider 目录' / '适配器'）。
+ * @param error - 捕获到的错误。
+ */
+function logRouteConflict(ctx: Context, what: string, error: unknown): void {
+  const code = (error as { code?: string }).code
+  ctx.logger.error(
+    `[workbuddy2api] ${what}注册被拒`
+    + `${code !== undefined ? `（${code}）` : ''}：${error instanceof Error ? error.message : String(error)}`,
+  )
+}
+
+/** 把状态快照渲染成命令输出文本。 */function renderStatus(status: Awaited<ReturnType<GatewaySupervisor['statusWithHealth']>>, authFiles: number): string {
   const stateText: Record<string, string> = {
     stopped: '未运行',
     external: '复用外部已运行的网关',
@@ -267,31 +284,49 @@ export function apply(ctx: Context, rawConfig?: Partial<GatewayPluginConfig>): v
   void makeApiKeyResolver(ctx, config).then((resolver) => { apiKeyResolver = resolver })
 
   // ① provider 目录 + 适配器注册。
-  // registerConfigurableProviders 让模型设置页知道这条路由存在（即使尚未激活）。
-  ctx.llm.registerConfigurableProviders([
-    {
-      provider: PROVIDER,
-      displayName: 'WorkBuddy (workbuddy2api 网关)',
-      settingsNs: SETTINGS_NS,
-      settingsPath: ['providers', PROVIDER],
-      // 这条路由是插件自带的，不是用户手写的配置声明。
-      declared: false,
-    },
-  ])
-  // adapter 注册对已被占用的路由抛 LlmError（code = DUPLICATE_ADAPTER，消息为
-  // `an adapter for provider "workbuddy2api" is already registered`）。
-  // 触发它说明 settings.yaml 里仍留有 llm-pi-ai.providers.workbuddy2api 段，需要删除。
+  //
+  // 两处注册都可能在「settings.yaml 里仍留着 llm-pi-ai.providers.workbuddy2api」时
+  // 失败（就是「装了插件但还没做迁移」）：
+  //   - registerConfigurableProviders → `configurable provider "workbuddy2api" is already declared`
+  //   - registerAdapter               → `an adapter for provider "workbuddy2api" is already registered`
+  //     （code = DUPLICATE_ADAPTER，消息里不含 code 字样）
+  //
+  // 这里**故意捕获后只记日志、不向上抛**。那种状态下旧配置本来工作正常，若抛错会让整个
+  // dsh 起不来，把一个可用环境变成完全不可用。降级后：dsh 照常启动、模型仍走 settings.yaml
+  // 里那份手工配置，而日志与 `/wb2api-status` 都明确指出该删哪一段。
+  let routeOwnedByOther = false
+
+  try {
+    // 让模型设置页知道这条路由存在（即使尚未激活）。
+    ctx.llm.registerConfigurableProviders([
+      {
+        provider: PROVIDER,
+        displayName: 'WorkBuddy (workbuddy2api 网关)',
+        settingsNs: SETTINGS_NS,
+        settingsPath: ['providers', PROVIDER],
+        // 这条路由是插件自带的，不是用户手写的配置声明。
+        declared: false,
+      },
+    ])
+  } catch (error) {
+    routeOwnedByOther = true
+    logRouteConflict(ctx, 'provider 目录', error)
+  }
+
   try {
     ctx.llm.registerAdapter([PROVIDER], adapter)
   } catch (error) {
-    const code = (error as { code?: string }).code
+    routeOwnedByOther = true
+    logRouteConflict(ctx, '适配器', error)
+  }
+
+  if (routeOwnedByOther) {
     ctx.logger.error(
-      `[workbuddy2api] provider 路由 "${PROVIDER}" 注册失败`
-      + `${code !== undefined ? `（${code}）` : ''}：${error instanceof Error ? error.message : String(error)}\n`
-      + '这通常意味着 ~/.dsh/settings.yaml 里仍存在 llm-pi-ai.providers.workbuddy2api 段。'
-      + '请删除该段后重启 dsh（provider id 相同，agent-default-model 等引用无需改动）。',
+      `[workbuddy2api] provider 路由 "${PROVIDER}" 由外部配置占用（见上条）。`
+      + '请删除 ~/.dsh/settings.yaml 里的 llm-pi-ai.providers.workbuddy2api 段后重启 dsh；'
+      + 'provider id 相同，agent-default-model / subagent-model-selection 的引用无需改动。'
+      + '在删除之前，模型请求仍走 settings.yaml 里那份手工配置。',
     )
-    throw error
   }
 
   // ② 管理命令。
@@ -309,7 +344,13 @@ export function apply(ctx: Context, rawConfig?: Partial<GatewayPluginConfig>): v
         const modelLine = models.length > 0
           ? `\n模型目录: ${models.length} 个（示例: ${models.slice(0, 5).map(model => model.id).join(', ')}${models.length > 5 ? ', …' : ''}）`
           : `\n模型目录: 拉取失败${catalog.lastError !== undefined ? `（${catalog.lastError}）` : ''}`
-        return { kind: 'success', text: renderStatus(status, authFiles) + modelLine }
+        // 路由被占用的状态必须显式暴露：此时插件托管了网关，但模型请求走的是
+        // settings.yaml 里那份手工配置 —— 不说清楚会让人以为插件没生效。
+        const routeLine = routeOwnedByOther
+          ? `\n\n⚠ provider 路由 "${PROVIDER}" 未由本插件注册（已被 settings.yaml 占用）。`
+            + '\n请删除 ~/.dsh/settings.yaml 里的 llm-pi-ai.providers.workbuddy2api 段后重启 dsh。'
+          : ''
+        return { kind: 'success', text: renderStatus(status, authFiles) + modelLine + routeLine }
       } catch (error) {
         return { kind: 'error', text: error instanceof Error ? error.message : String(error) }
       }
