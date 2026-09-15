@@ -126,6 +126,22 @@ subagent-model-selection:
 
 改完重启 dsh。
 
+### 用脚本做这一步
+
+仓库自带 `scripts/migrate-settings.ps1`，按缩进精确摘除该段并自动备份（不会重写整个文件，因此 dsh 自己的注释与键顺序都保留）：
+
+```powershell
+# 先预览要删什么
+pwsh -File scripts/migrate-settings.ps1 -WhatIf
+
+# 确认后执行（请在 dsh 已关闭时做）
+pwsh -File scripts/migrate-settings.ps1
+```
+
+> **为什么必须在 dsh 关闭时执行**：`settings.yaml` 是被**热监听**的（dsh-settings-file 用 chokidar 监视）。在 dsh 运行中删掉该段会立刻生效，而插件那份 provider 要等重启才会注册 —— 中间窗口里模型会不可用，正在进行的会话可能直接失败。
+
+脚本会打印回滚命令（把自动备份拷回来即可）。
+
 ---
 
 ## 配置
