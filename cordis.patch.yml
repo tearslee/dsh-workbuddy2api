@@ -1,0 +1,5 @@
+# dsh-workbuddy2api 配置包补丁：在空配置根上追加插件行。
+# 后续配置补丁可通过 id 引用此行（id: workbuddy2api）。
+- insert:
+    - id: workbuddy2api
+      name: 'dsh-workbuddy2api'
