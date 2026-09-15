@@ -15,19 +15,10 @@
  * `plugin-degrade.spec.ts` 单独覆盖需要另建一棵树的降级路径。
  */
 
-import { createRequire } from 'node:module'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { beforeAll, describe, expect, it } from 'vitest'
-
-const require = createRequire(import.meta.url)
-const DSH_AI = 'C:/Users/Administrator/AppData/Local/Programs/PhpWebStudy-Data/env/node/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai'
-
-/** 把内核包解析到实际文件路径（ESM 不接受裸目录）。 */
-function resolveKernel(name: string): string {
-  const main = (require(join(DSH_AI, name, 'package.json')) as { main: string }).main
-  return pathToFileURL(join(DSH_AI, name, main)).href
-}
+import { hasKernel, resolveKernel } from '../kernel-resolver.js'
 
 const projectRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 
@@ -62,28 +53,29 @@ let ctx: {
   stop(): Promise<void>
 }
 
-beforeAll(async () => {
-  cordis = await import(resolveKernel('cordis'))
-  llm = await import(resolveKernel('dsh-llm'))
-  const commands = await import(resolveKernel('dsh-commands'))
-  plugin = await import(pathToFileURL(join(projectRoot, 'lib', 'index.js')).href) as unknown as PluginExports
+// 需要真实内核才能建 cordis 树：探测不到就跳过，避免别人的 checkout 红一片。
+describe.skipIf(!hasKernel())('插件装载（真实 cordis + dsh-llm）', () => {
+  beforeAll(async () => {
+    cordis = await import(resolveKernel('cordis'))
+    llm = await import(resolveKernel('dsh-llm'))
+    const commands = await import(resolveKernel('dsh-commands'))
+    plugin = await import(pathToFileURL(join(projectRoot, 'lib', 'index.js')).href) as unknown as PluginExports
 
-  ctx = new cordis.Context() as unknown as typeof ctx
-  // 服务注册表是**每个根 Context 独立**的，所以一个文件建一棵树即可。
-  //
-  // 注意：`LlmRuntime` / `CommandRuntime` 都是 cordis `Service` 子类，**构造时就以
-  // 静态 `provide` 名把自己注册进传入的 ctx**。因此构造之后**不能**再对同一名字调
-  // `ctx.provide()` —— 那会报 `service "X" has been registered at <root>`。
-  // 只有非 Service 的替身（subprocess）才需要手工 provide。
-  void new llm.LlmRuntime(ctx as never)
-  void new commands.CommandRuntime(ctx as never)
-  ctx.provide('subprocess', fakeSubprocess())
+    ctx = new cordis.Context() as unknown as typeof ctx
+    // 服务注册表是**每个根 Context 独立**的，所以一个文件建一棵树即可。
+    //
+    // 注意：`LlmRuntime` / `CommandRuntime` 都是 cordis `Service` 子类，**构造时就以
+    // 静态 `provide` 名把自己注册进传入的 ctx**。因此构造之后**不能**再对同一名字调
+    // `ctx.provide()` —— 那会报 `service "X" has been registered at <root>`。
+    // 只有非 Service 的替身（subprocess）才需要手工 provide。
+    void new llm.LlmRuntime(ctx as never)
+    void new commands.CommandRuntime(ctx as never)
+    ctx.provide('subprocess', fakeSubprocess())
 
-  // autoStart: false —— 测试不拉起真实进程；端口用一个必然空闲的高端口。
-  plugin.apply(ctx, { autoStart: false, baseURL: 'http://127.0.0.1:59993/v1' })
-})
+    // autoStart: false —— 测试不拉起真实进程；端口用一个必然空闲的高端口。
+    plugin.apply(ctx, { autoStart: false, baseURL: 'http://127.0.0.1:59993/v1' })
+  })
 
-describe('插件装载（真实 cordis + dsh-llm）', () => {
   it('插件导出面符合 dsh 插件契约', () => {
     expect(plugin.name).toBe('workbuddy2api')
     expect(plugin.inject).toEqual(['llm', 'subprocess', 'commands'])

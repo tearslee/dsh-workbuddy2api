@@ -5,8 +5,8 @@
 | 状态 | 待实施（方案已定，未编码） |
 | 目标产物 | 独立发布的 dsh 插件 `dsh-workbuddy2api`，npm 包名待定 |
 | 上游依赖 | [Sliverkiss/workbuddy2api](https://github.com/Sliverkiss/workbuddy2api)（Go，MIT，**只消费不改**） |
-| 工程骨架来源 | `D:\tools\deepseek-harness-codearts`（gitee.com/iJetLi/deepseek-harness-codearts）的 buddy provider 构建链 |
-| 本机环境 | dsh `0.1.6-alpha.1`（全局单份，`%LOCALAPPDATA%\Programs\PhpWebStudy-Data\env\node\node_modules\@deepseek-ai\dsh`）|
+| 工程骨架来源 | `deepseek-harness-codearts`（gitee.com/iJetLi/deepseek-harness-codearts）的 buddy provider 构建链 |
+| 环境 | dsh `0.1.6-alpha.1`（单份全局安装，`<dsh 安装目录>/node_modules/@deepseek-ai/dsh`）|
 
 ---
 
@@ -204,9 +204,9 @@ llm-pi-ai:
 
 ### 4.3 涉及的外部文件（只读参考，不修改）
 
-- `D:\tools\workbuddy2api\internal\server\handler.go`（路由、元数据）
-- `D:\tools\workbuddy2api\README.md`（端点行为、许可边界）
-- `D:\tools\deepseek-harness-codearts\src\*`（构建链与适配器范本）
+- `workbuddy2api/internal/server/handler.go`（路由、元数据）
+- `workbuddy2api/README.md`（端点行为、许可边界）
+- `deepseek-harness-codearts/src/*`（构建链与适配器范本）
 - `~/.dsh/settings.yaml`（**要改**：§3.7 删除冲突 provider）
 - dsh 内核类型：`@deepseek-ai/dsh-llm/lib/types/*.d.ts`、`@deepseek-ai/dsh-subprocess/README.zh.md`
 
@@ -250,12 +250,12 @@ llm-pi-ai:
 
 ## 7. 关联文档与证据索引
 
-- 上游仓库：https://github.com/Sliverkiss/workbuddy2api （本机 clone：`D:\tools\workbuddy2api`，master `3b87c14`）
-- 工程骨架来源：https://gitee.com/iJetLi/deepseek-harness-codearts （本机：`D:\tools\deepseek-harness-codearts`）
+- 上游仓库：https://github.com/Sliverkiss/workbuddy2api （master `3b87c14`）
+- 工程骨架来源：https://gitee.com/iJetLi/deepseek-harness-codearts
 - dsh 插件开发教程：https://dev.to/henry_lin_3ac6363747f45b4/deepseek-harness-dsh-cha-jian-kai-fa-jiao-cheng-4h6j
 - dsh 自定义 provider（用户视角）：https://findharness.com/blog/deepseek-harness-custom-model-providers
 - 本机 dsh 插件安装/排障手册：`~/.workbuddy/skills/dsh-plugin-install/SKILL.md`
-- 当日调研记录：`D:\tools\.workbuddy\memory\2026-09-15.md`（「把 workbuddy2api 改造成 dsh 插件」两节）
+- 当日调研记录：本机 `.workbuddy/memory/2026-09-15.md`（「把 workbuddy2api 改造成 dsh 插件」两节）
 
 **证据行号速查**
 

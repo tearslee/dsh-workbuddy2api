@@ -154,8 +154,8 @@ pwsh -File scripts/migrate-settings.ps1
       name: 'dsh-workbuddy2api'
       config:
         baseURL: http://127.0.0.1:7863/v1
-        binaryPath: D:/tools/workbuddy2api/wb2a-server.exe
-        repoPath: D:/tools/workbuddy2api
+        binaryPath: /path/to/workbuddy2api/wb2a-server.exe
+        repoPath: /path/to/workbuddy2api
         autoStart: true
         realmPrefixPolicy: strip-cn
 ```

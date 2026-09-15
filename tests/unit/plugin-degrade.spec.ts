@@ -5,22 +5,15 @@
  * 进程级共享的，一个文件只能干净地建一棵树。
  */
 
-import { createRequire } from 'node:module'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { describe, expect, it } from 'vitest'
-
-const require = createRequire(import.meta.url)
-const DSH_AI = 'C:/Users/Administrator/AppData/Local/Programs/PhpWebStudy-Data/env/node/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai'
-
-function resolveKernel(name: string): string {
-  const main = (require(join(DSH_AI, name, 'package.json')) as { main: string }).main
-  return pathToFileURL(join(DSH_AI, name, main)).href
-}
+import { hasKernel, resolveKernel } from '../kernel-resolver.js'
 
 const projectRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 
-describe('插件降级路径', () => {
+// 需要真实内核才能建 cordis 树：探测不到就跳过，避免别人的 checkout 红一片。
+describe.skipIf(!hasKernel())('插件降级路径', () => {
   it('settings 与 subprocess 都缺失时：不崩溃，provider 仍注册', async () => {
     const cordis = await import(resolveKernel('cordis'))
     const llm = await import(resolveKernel('dsh-llm'))

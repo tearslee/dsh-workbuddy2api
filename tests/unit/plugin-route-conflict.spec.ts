@@ -7,22 +7,15 @@
  * 不是用户配置问题）。所以这里单开一棵树。
  */
 
-import { createRequire } from 'node:module'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { describe, expect, it } from 'vitest'
-
-const require = createRequire(import.meta.url)
-const DSH_AI = 'C:/Users/Administrator/AppData/Local/Programs/PhpWebStudy-Data/env/node/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai'
-
-function resolveKernel(name: string): string {
-  const main = (require(join(DSH_AI, name, 'package.json')) as { main: string }).main
-  return pathToFileURL(join(DSH_AI, name, main)).href
-}
+import { hasKernel, resolveKernel } from '../kernel-resolver.js'
 
 const projectRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 
-describe('provider 路由被外部配置占用时的降级', () => {
+// 需要真实内核才能建 cordis 树：探测不到就跳过，避免别人的 checkout 红一片。
+describe.skipIf(!hasKernel())('provider 路由被外部配置占用时的降级', () => {
   it('插件不抛错，dsh 仍可启动，日志指出该删哪一段', async () => {
     const cordis = await import(resolveKernel('cordis'))
     const llm = await import(resolveKernel('dsh-llm'))
