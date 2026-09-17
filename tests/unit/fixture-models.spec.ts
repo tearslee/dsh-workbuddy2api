@@ -2,10 +2,13 @@
  * 针对**真实网关响应样本**的映射测试。
  *
  * `tests/fixtures/v1-models.sample.json` 是从运行中的网关 `GET /v1/models`
- * 原样抓取的响应体（37 个模型：16 个 `cn:` + 21 个 `global:`）。用它做回归，
- * 可以锁住上游字段的真实形状 —— 包括那些只能从实际数据里看出来的性质：
+ * 原样抓取的响应体快照（37 个模型：16 个 `cn:` + 21 个 `global:`，抓取基线为
+ * 网关 `3b87c14`）。用它做回归，可以锁住上游字段的真实形状 —— 包括那些只能从
+ * 实际数据里看出来的性质：
  *
- *  - `global:` 分支没有 `max_output_tokens`，`context_length` 恒为 131072；
+ *  - **字段缺席分支**：快照时点 `global:` 条目没有 `max_output_tokens`、
+ *    `context_length` 恒为 131072。该限制上游自 `a9ccace` 起已修复（两域同口径
+ *    走四级查找 + 富字段映射），快照保留下来专门用于覆盖解析器的「字段缺席」路径；
  *  - CN 侧 `reasoning_supported_efforts` 里有 `medium` 这种 settings.yaml
  *    年代从未手写过的档位；
  *  - `supports_images` 只在支持时出现。
@@ -65,19 +68,42 @@ describe('真实 /v1/models 样本', () => {
     expect(cn.some(model => model.maxOutputTokens !== undefined)).toBe(true)
   })
 
-  it('上游已知局限：global 侧全部没有 max_output_tokens，窗口恒为 131072', () => {
-    // 这不是插件的 bug，是上游 modelList() global 分支的硬编码
-    // （handler.go 里 global 条目只写 context_length: 131072）。
-    // 用断言锁住它，以便上游修复时立刻可见。
+  it('快照形态（历史）：global 侧全部没有 max_output_tokens，窗口恒为 131072', () => {
+    // 这是**快照时点**（网关 3b87c14）的上游形态，不是当前行为 —— 上游自 a9ccace
+    // 起 global 条目同样走四级查找并透出 max_output_tokens。保留此断言是为了守住
+    // 解析器对「字段缺席」的兼容：这是真实数据里出现过的形态。
     const global = stripCn.filter(model => model.realm === 'global')
     expect(global.length).toBeGreaterThan(0)
     expect(global.every(model => model.maxOutputTokens === undefined)).toBe(true)
     expect(global.every(model => model.contextWindow === 131072)).toBe(true)
   })
 
-  it('上游已知局限：global 侧不下发 supports_images', () => {
+  it('快照形态（历史）：global 侧不下发 supports_images', () => {
     const global = stripCn.filter(model => model.realm === 'global')
     expect(global.every(model => model.supportsImages === false)).toBe(true)
+  })
+
+  it('当前形态：global 条目同样带 max_output_tokens / supports_images 时可正常解析', () => {
+    // 对应网关 a9ccace 起的 global 分支（与 CN 同口径的四级查找 + 富字段映射）。
+    const current = mapModelCatalog({
+      object: 'list',
+      data: [
+        {
+          id: 'global:gpt-5.4',
+          context_length: 400000,
+          max_output_tokens: 128000,
+          supports_images: true,
+          reasoning_supported_efforts: ['low', 'high'],
+          reasoning_default_effort: 'high',
+        },
+        { id: 'cn:deepseek-v4.1-flash', context_length: 128000 },
+      ],
+    }, 'strip-cn')
+    const global = current.find(model => model.realm === 'global')
+    expect(global?.contextWindow).toBe(400000)
+    expect(global?.maxOutputTokens).toBe(128000)
+    expect(global?.supportsImages).toBe(true)
+    expect(global?.defaultEffort).toBe('high')
   })
 
   it('CN 侧有模型支持图片输入', () => {

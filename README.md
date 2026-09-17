@@ -1,121 +1,62 @@
 # dsh-workbuddy2api
 
-把 [workbuddy2api](https://github.com/Sliverkiss/workbuddy2api) 网关接进 [DeepSeek Harness（dsh）](https://www.npmjs.com/package/@deepseek-ai/dsh) 的插件。
+**把 [workbuddy2api](https://github.com/Sliverkiss/workbuddy2api) 网关接进 [DeepSeek Harness（dsh）](https://www.npmjs.com/package/@deepseek-ai/dsh) 的插件。**
 
-装好之后：**dsh 启动时自动拉起网关，退出时自动回收；模型列表、上下文窗口、思考档位全部从网关自动读取** —— 不需要再手写 `settings.yaml` 里的模型元数据。
+装上之后：
 
----
+- **dsh 启动时自动拉起网关，退出时自动回收**；端口上已有健康网关在跑则直接复用，不重复拉起，也不会去杀别人的进程。
+- **模型目录自动同步** —— 模型列表、上下文窗口、输出上限、思考档位全部从网关 `GET /v1/models` 实时读取，不必再手写 `settings.yaml` 里的模型元数据。
+- **4 条管理命令**：`/wb2api-status` · `/wb2api-start` · `/wb2api-restart` · `/wb2api-login`。
 
-## 为什么这个插件重要：轮级聚合，让一次对话只有一个 RequestID
-
-如果你曾在 [腾讯 CodeBuddy 后台用量明细](https://www.codebuddy.cn/admin/usage/detail) 里看到**一次对话被拆成几十上百条记录**，那就是上游的 RequestID 碎片化。
-
-正常直连 CodeBuddy 时，一次对话只产生 **1 个** RequestID；经网关转发后却变成几十上百个。这是同一个问题在三个阶段的实测截图：
-
-**① 修复前** —— 上游后台把一次对话拆成无数次小请求
-
-<img src="https://raw.githubusercontent.com/tearslee/dsh-workbuddy2api/main/docs/images/before-fragmented.png" alt="修复前：同一请求在上游后台被拆分为几十上百个 RequestID" width="100%">
-
-**② 上游第一次修复后** —— 加了会话头族，**但仍然是多个请求**（因为 OpenAI 兼容客户端不带 `conversationId`）
-
-<img src="https://raw.githubusercontent.com/tearslee/dsh-workbuddy2api/main/docs/images/after-upstream-fix-still-fragmented.png" alt="上游第一次修复后仍然碎片化" width="100%">
-
-**③ PR #73 合并后** —— 按对话轮聚合，一次对话轮一个 RequestID
-
-<img src="https://raw.githubusercontent.com/tearslee/dsh-workbuddy2api/main/docs/images/after-pr-fixed-1.png" alt="修复后：RequestID 按对话轮聚合" width="100%">
-
-<img src="https://raw.githubusercontent.com/tearslee/dsh-workbuddy2api/main/docs/images/after-pr-fixed-2.png" alt="修复后：用量明细按轮聚合" width="100%">
-
-（截图取自上游 issue [#35](https://github.com/Sliverkiss/workbuddy2api/issues/35) 与 [#69](https://github.com/Sliverkiss/workbuddy2api/issues/69)。）
-
-### 这个 bug 是怎么修的
-
-1. **上游先加会话头族**（`X-Conversation-ID` / `X-Conversation-Request-ID` / `X-Request-ID` / B3 trace 族），后台改按 `X-Conversation-Request-ID` 聚合。
-2. **但没修好** —— 因为 OpenAI 兼容客户端（dsh / Codex / Cherry Studio）的请求体里**既无 `conversationId` 也无 `metadata`**，网关的 `ExtractKey` 恒返回空串，聚合主键只能逐请求新生成。当时的截图（issue #69 里回复「更新后我发现其实还是多个请求」）：见上方 **②**。
-3. **本仓库作者提交的 [PR #73](https://github.com/Sliverkiss/workbuddy2api/pull/73)（已合并）** 补上了缺失的那一层：为**无会话键客户端**增加「对话轮级」兜底聚合键：
-
-   ```
-   TurnKey(body) = body 里最后一条 role=="user" 消息的「序号:文本」
-   TurnRequestID(turnKey) = sha256(盐|turnKey) 前 16 字节 hex
-   ```
-
-   取**最后一条**而非第一条：首条在整个会话内不变，会把一次会话的所有轮并成一个键；序号入键：两轮里内容相同的提问（"继续"）不会被混并。于是**一次用户发送内的所有上游调用**（tool call 多轮 / 换号重试 / 降级重发）共享同一个 ID，用户发下一条消息自动换键。
-
-   > 上游随后在 `edfbf06` 里把会话级与轮级的派生收敛到同一个盐，消除了重复实现。
-
-### 这跟本插件有什么关系
-
-**有关系，而且是关键的一环。** `TurnKey` 的输入是**适配器实际发出去的请求体**。它的规则是「最后一条 `role=="user"` 消息」，于是插件侧有两条隐含前提，一旦破坏就会让碎片化**静默复发**（网关照常回包，只有腾讯后台的用量明细能看出问题）：
-
-| 前提 | 为什么 | 插件怎么做 |
-|---|---|---|
-| 工具结果**不能**以 `role:"user"` 上线 | harness 把 tool-result 搭载在 **user 角色**消息里。若原样发出，`TurnKey` 会取到「工具输出」那条（每轮都变）→ 键每轮漂移 → 碎片化复发 | 展开为独立的 `role:"tool"` 消息，于是「最后一条 user」仍是用户真正的那句话 |
-| 末条用户文本在轮内**逐字不变** | 轮内会不断追加 assistant/tool 消息；若用户那句话被改写或挪位，同轮各 step 会各拿一个键 | 序列化时不动用户消息的内容与顺序 |
-
-这两条都在 `tests/unit/turn-key-contract.spec.ts` 里用**与 Go 侧同构的取键规则**做了断言（跨语言契约测试），并且验证过：把 `role:'tool'` 改回 `role:'user'` 会让 8 个测试立刻失败。
-
-更进一步，`tools/turnkey-verify/` 把适配器**真实产出的请求体**喂给**上游真实的 Go 实现**跑一遍，得到端到端证据 —— 一次对话轮内三个 step 派生出**完全相同**的聚合 ID：
-
-```
-A-step1        key=u0:跑一下        id=6a0edaa54b38c3473703e66325edde74
-A-step2        key=u0:跑一下        id=6a0edaa54b38c3473703e66325edde74
-A-step3        key=u0:跑一下        id=6a0edaa54b38c3473703e66325edde74
-```
-
-用法见 [tools/turnkey-verify/README.md](tools/turnkey-verify/README.md)。
-
-> 换句话说：**PR #73 修的是网关侧「没有键」的问题；本插件保证那个键在 dsh 这条链路上真的稳定。**
+插件本身很薄：协议适配、账号池、加权选号、分级熔断、定时任务、登录与 token 刷新**全部留在 Go 网关侧**。它只负责两件事 —— 进程生命周期，和模型目录自动化。
 
 ---
 
 ## 它解决什么
 
-直接用手工配置把 workbuddy2api 接进 dsh（在 `~/.dsh/settings.yaml` 写 `llm-pi-ai.providers.workbuddy2api`）能用，但有三处手工负担：
+直接用手工配置把 workbuddy2api 接进 dsh（在 `~/.dsh/settings.yaml` 里写 `llm-pi-ai.providers.workbuddy2api`）也能用，但有三处手工负担：
 
 | 问题 | 手工接法 | 本插件 |
 |---|---|---|
-| **模型元数据** | 每个模型的 `contextWindow` / `maxTokens` / `reasoningEfforts` / `input` 全手抄；上游增删模型必须手改文件 | 运行时读 `GET /v1/models` 的扩展字段自动映射 |
-| **进程管理** | dsh 启动前必须另行常驻 `wb2api-server.exe`，退出也不联动 | 插件托管子进程，生命周期绑定 dsh |
+| **模型元数据** | 每个模型的 `contextWindow` / `maxTokens` / `reasoningEfforts` / `input` 全手抄；网关增删模型必须手改文件 | 运行时读 `/v1/models` 自动映射 |
+| **进程管理** | dsh 启动前必须另行常驻 `wb2a-server.exe`，退出也不联动 | 插件托管子进程，生命周期绑定 dsh |
 | **可分发** | 配置只存在于本机，别人拿不到 | 一个 npm 包，装上即可用 |
-
-关键前提：workbuddy2api 的 `/v1/models` **已经透出全部元数据**（`internal/server/handler.go` 的 `modelList()`，见上游 issue #84）。因此模型元数据这块插件不需要内置静态兜底表，也不需要为它给上游提 PR。
 
 ### 字段映射
 
-| 网关 `/v1/models` | dsh `LlmResolvedModelInfo` |
-|---|---|
-| `context_length` | `context.contextWindow` |
-| `max_output_tokens` | `defaultMaxTokens` |
-| `supports_images` | `inputModalities`（缺席 = 仅 `['text']`） |
-| `reasoning_supported_efforts` | `reasoning.efforts` |
-| `reasoning_default_effort` | `reasoning.defaultEffort`（先校验包含于 `efforts`） |
+网关的 `/v1/models` 已经透出全部模型元数据（`internal/server/handler.go` 的 `modelList()`，对应上游 issue #84），因此插件**无需内置静态兜底表**：
 
-> 内置的 `openai-completions` 栈不认这些非标准字段，这正是当初必须手写元数据的根因 —— 也是本插件的核心价值。
+| 网关 `/v1/models` | dsh `LlmResolvedModelInfo` | 说明 |
+|---|---|---|
+| `context_length` | `context.contextWindow` | 网关保证有值（四级查找链，见下） |
+| `max_output_tokens` | `defaultMaxTokens` | 网关未收录时**不下发该键**，插件随之不声明 |
+| `supports_images` | `inputModalities` | 缺席即仅 `['text']` |
+| `reasoning_supported_efforts` | `reasoning.efforts` | 空则不声明整个 `reasoning` |
+| `reasoning_default_effort` | `reasoning.defaultEffort` | 插件先校验它确实包含于 `efforts` 内 |
 
----
+> 内置的 `openai-completions` 栈不认这些非标准字段 —— 这正是当初必须手写元数据的根因，也是本插件的核心价值。
+>
+> 网关侧对 `context_length` / `max_output_tokens` 走**四级查找链**：上游动态值 → 静态种子表 → `model.json` 缓存 → models.dev 按需拉取；全未命中时窗口兜底 1M、输出上限省略。`cn:` 与 `global:` 两域同口径。
 
-## 架构
+### 为什么不破坏上游的「按轮聚合」
 
-```
-dsh 进程（TypeScript）
-└── 插件 dsh-workbuddy2api
-    ├── ① 进程托管  GatewaySupervisor：spawn → /healthz 探活 → dispose 自动回收
-    ├── ② provider  注册 workbuddy2api 路由；listModels/resolveModel 打 /v1/models
-    └── ③ 管理面    /wb2api-status · /wb2api-start · /wb2api-restart · /wb2api-login
-            │ HTTP（openai-completions 协议）
-            ▼
-    wb2api 子进程 :7863（Go）
-    账号池加权选号 · 分级熔断 · 六类定时任务 · SSE 重建 · payload 改写
-```
+本插件的请求序列化有两条硬约束：**工具结果必须发成 `role:"tool"`**、**用户消息的内容与顺序在轮内逐字不变**。破坏任一条，上游按对话轮聚合 RequestID 的兜底键就会在每个 step 漂移，用量明细重新碎片化 —— 且是静默的（网关照常回包）。
 
-**职责边界**：协议适配、账号池、熔断、定时任务、CodeBuddy 登录与 token 刷新**全部留在 Go 侧**。插件只解决「进程生命周期」与「模型目录自动化」两件事，因此适配器是一层很薄的 SSE 翻译。
+原理、实测截图与端到端证据：[docs/turn-level-aggregation.md](docs/turn-level-aggregation.md)。
 
 ---
 
 ## 前置条件
 
-1. **dsh** ≥ `0.1.6-alpha.1`（`npm i -g @deepseek-ai/dsh`）
-2. **workbuddy2api 的可执行文件**。上游[明确不提供预编译 release](https://github.com/Sliverkiss/workbuddy2api)，需要自行从源码构建：
+1. **dsh**，全局安装：
+
+   ```bash
+   npm i -g @deepseek-ai/dsh
+   ```
+
+   本插件在 dsh `0.1.6-alpha.1` 上验证通过；`package.json` 声明的兼容区间是 `>=0.1.2-rc.1 <0.2.0-0`。
+
+2. **workbuddy2api 的可执行文件**。上游[明确不提供预编译 release](https://github.com/Sliverkiss/workbuddy2api)，需自行从源码构建：
 
    ```bash
    git clone https://github.com/Sliverkiss/workbuddy2api
@@ -123,7 +64,7 @@ dsh 进程（TypeScript）
    go build -o wb2a-server.exe ./cmd/server
    ```
 
-3. **至少一个已登录的账号**（网关没有账号时 `/healthz` 会报 `healthy: 0`）：
+3. **至少一个已登录账号**（没有账号时 `/healthz` 报 `healthy: 0`）：
 
    ```bash
    ./login.sh        # 交互式 OAuth，必须在真实终端里跑
@@ -154,58 +95,6 @@ dsh plugin --profile web add file:./dsh-workbuddy2api-0.1.0.tgz
 
 ---
 
-## ⚠️ 迁移：先删掉冲突的旧配置
-
-插件注册 `workbuddy2api` 路由后，如果 `~/.dsh/settings.yaml` 里还留着同名 provider，启动日志会出现：
-
-```
-[workbuddy2api] provider 目录注册被拒：configurable provider "workbuddy2api" is already declared
-[workbuddy2api] 适配器注册被拒（DUPLICATE_ADAPTER）：an adapter for provider "workbuddy2api" is already registered
-[workbuddy2api] provider 路由 "workbuddy2api" 由外部配置占用（见上条）。请删除 ...
-```
-
-**dsh 仍会正常启动**（插件故意不把冲突抛出去，避免把一个本来可用的环境弄成起不来）：
-此时模型请求走的是 `settings.yaml` 里那份手工配置，本插件的自动元数据不会生效。
-`/wb2api-status` 也会显示这条警告。
-
-从 `~/.dsh/settings.yaml` **删除整段**（连同它下面那 20 个模型的元数据）后重启即可：
-
-```yaml
-llm-pi-ai:
-  providers:
-    workbuddy2api:      # ← 从这一行删到该 provider 段的末尾
-```
-
-**其余引用保持不变** —— provider id 没变，所以这些无需改动：
-
-```yaml
-agent-default-model:
-  provider: workbuddy2api       # 保持不变
-subagent-model-selection:
-  allowedModels:
-    - provider: workbuddy2api   # 保持不变
-```
-
-改完重启 dsh。
-
-### 用脚本做这一步
-
-仓库自带 `scripts/migrate-settings.ps1`，按缩进精确摘除该段并自动备份（不会重写整个文件，因此 dsh 自己的注释与键顺序都保留）：
-
-```powershell
-# 先预览要删什么
-pwsh -File scripts/migrate-settings.ps1 -WhatIf
-
-# 确认后执行（请在 dsh 已关闭时做）
-pwsh -File scripts/migrate-settings.ps1
-```
-
-> **为什么必须在 dsh 关闭时执行**：`settings.yaml` 是被**热监听**的（dsh-settings-file 用 chokidar 监视）。在 dsh 运行中删掉该段会立刻生效，而插件那份 provider 要等重启才会注册 —— 中间窗口里模型会不可用，正在进行的会话可能直接失败。
-
-脚本会打印回滚命令（把自动备份拷回来即可）。
-
----
-
 ## 配置
 
 插件配置写在 profile 的 `cordis.patch.yml` 里（或任何引用 `id: workbuddy2api` 的补丁）。全部字段都可省略：
@@ -230,11 +119,11 @@ pwsh -File scripts/migrate-settings.ps1
 | `repoPath` | `''` | 网关源码目录（也用作默认工作目录） |
 | `workingDir` | `''` | 子进程工作目录；为空时取 `repoPath` |
 | `listenPort` | `7863` | 仅用于端口占用判定与状态展示 |
-| `autoStart` | `true` | dsh 启动时自动拉起网关 |
-| `realmPrefixPolicy` | `strip-cn` | 模型 id 的 realm 前缀策略，见下 |
+| `autoStart` | `true` | dsh 启动时是否自动拉起网关 |
+| `realmPrefixPolicy` | `strip-cn` | 模型 id 的前缀策略，见下 |
 | `modelsTtlSeconds` | `600` | `/v1/models` 缓存 TTL |
 | `requestTimeoutSeconds` | `600` | 单次请求整体超时 |
-| `idleTimeoutSeconds` | `300` | SSE 帧间空闲超时（超时报可重试 `TIMEOUT`） |
+| `idleTimeoutSeconds` | `300` | SSE 帧间空闲超时（超时报可重试的 `TIMEOUT`） |
 | `firstTokenTimeoutSeconds` | `120` | 首个 token 等待超时 |
 | `healthTimeoutSeconds` | `3` | 单次探活超时 |
 | `graceMs` | `5000` | 子进程优雅退出宽限期 |
@@ -255,10 +144,10 @@ pwsh -File scripts/migrate-settings.ps1
 
 网关的模型 id 带 realm 前缀（`cn:deepseek-v4.1-flash` / `global:gpt-5.4`）。
 
-- **`strip-cn`（默认）** —— 剥掉 `cn:`，保留 `global:`。模型列表里的 id 与你手工配置时期一致，历史会话与预设无需迁移。
+- **`strip-cn`（默认）** —— 剥掉 `cn:`，保留 `global:`。模型 id 与你手工配置时期一致，历史会话与预设无需迁移。
 - **`keep`** —— 原样透出 `cn:` / `global:`。双域账号并存时可显式路由到国际版账号。
 
-> 两种策略在只有 CN 账号时**行为一致**：网关的 `resolveModel` 对无前缀名一律判为 `cn` 域。
+> 只有 CN 账号时两种策略**行为一致**：网关的 `resolveModel` 对无前缀名一律判为 `cn` 域。
 >
 > **线格式与展示是两件事**：无论哪种策略，插件发出请求前都会把无前缀 id 补成 `cn:<id>`，避免 realm 解析歧义。
 
@@ -268,7 +157,7 @@ pwsh -File scripts/migrate-settings.ps1
 
 | 命令 | 作用 |
 |---|---|
-| `/wb2api-status` | 网关状态、账号可用性（`healthy/total`）、realm 可服务性、模型数量 |
+| `/wb2api-status` | 网关状态、账号可用性（`healthy/total`）、各 realm 可服务性、模型数量 |
 | `/wb2api-start` | 启动网关（幂等：已在运行则直接复用） |
 | `/wb2api-restart` | 重启网关并刷新模型目录 |
 | `/wb2api-login` | 显示登录指引 |
@@ -277,14 +166,11 @@ pwsh -File scripts/migrate-settings.ps1
 
 启动前插件会先探 `GET /healthz`（**该端点无需鉴权**）：
 
-- **端口上已有健康网关** → 直接复用，状态记为 `external`，插件**不会**再拉一个进程。
-  这正是「你过去手工常驻了一个 wb2api」的迁移场景：装完插件后一切照旧可用，
-  但那个进程仍归你管 —— dsh 退出时**不会**去杀它（插件不杀自己没启动的进程）。
-- **端口空闲** → 解析可执行文件并 spawn，此后它的生命周期归 dsh：`dispose` 时一并回收。
+- **端口上已有健康网关** → 直接复用，状态记为 `external`，插件**不会**再拉一个进程。这正是「以前手工常驻了一个 wb2api」的迁移场景：装完插件一切照旧可用，但那个进程仍归你管 —— dsh 退出时**不会**去杀它（插件不杀自己没启动的进程）。
+- **端口空闲** → 解析可执行文件并 spawn，此后它的生命周期归 dsh，`dispose` 时一并回收。
 - **端口被非网关程序占用** → 明确报错，而不是静默失败。
 
-所以：**如果你想让网关真正由 dsh 托管，先停掉你手工启动的那个进程**，再重启 dsh。
-`/wb2api-status` 的 `状态:` 一行会直接告诉你当前是哪种情形。
+所以：**想让网关真正由 dsh 托管，先停掉你手工启动的那个进程**，再重启 dsh。`/wb2api-status` 的 `状态:` 一行会告诉你当前是哪种情形。
 
 ### 登录为什么必须手工做
 
@@ -294,10 +180,57 @@ pwsh -File scripts/migrate-settings.ps1
 
 ## 已知限制
 
-- **`global:` 模型的元数据是占位值。** 上游 `modelList()` 的 global 分支把 `context_length` 硬编码为 `131072`，且下发 `max_output_tokens` 与 `supports_images`。所以国际版模型的窗口/输出上限**不是真实值**。CN 侧无此问题（走动态拉取）。
-- **无账号时网关"启动 ≠ 可用"。** 进程起来但 `/healthz` 报 `healthy: 0`，插件会把状态标为「运行中（无可用账号）」而不是假装成功。
-- **不做按需 `go build`。** 本版要求你自行准备好二进制（`binaryPath` 或 `repoPath` + 自动探测）。构建编排留待后续。
-- **模型不出现在「设置 → 模型」页，只在聊天窗口的模型选择器里。** 这是 dsh 的既定设计，不是本插件的缺陷。设置页本质是**配置文件编辑器**：`dsh-client-ui-settings-models` 的 `layoutOf()` 只认 `llm-deepseek` 与 `llm-pi-ai` 两个 settings namespace，其余一律落到未知分支、不渲染 provider 行。本插件的 provider 是**代码注册的运行时路由**（`ctx.llm.registerAdapter` + 运行时 `listModels()`），模型目录来自网关 `/v1/models`，本就不属于那个界面的管辖范围；dsh 自己的包文档也是这么定义的 —— *"stays visible in pickers but not on this page's rows"*。要确认模型可用：看聊天窗口的模型选择器，或执行 `/wb2api-status`。
+- **窗口/输出上限是「上游实际值 + 本地估计」的混合。** 网关对 `context_length` 走四级查找链：上游动态值权威 → 静态种子表 → `model.json` 缓存 → models.dev 按需拉取；**全未命中时兜底 1M**。因此冷门模型的窗口可能是兜底值而非真实值。`max_output_tokens` 同理，未收录时网关**不下发该键**，此时插件不声明 `defaultMaxTokens`，由网关自行决定。
+- **无账号时网关「启动 ≠ 可用」。** 进程起来但 `/healthz` 报 `healthy: 0`，插件会把状态标为「运行中（无可用账号）」而不是假装成功。
+- **不做按需 `go build`。** 本版要求你自行准备好二进制（`binaryPath`，或 `repoPath` + 自动探测）。构建编排留待后续。
+- **模型不出现在「设置 → 模型」页，只在聊天窗口的模型选择器里。** 这是 dsh 的既定设计，不是本插件的缺陷：设置页本质是**配置文件编辑器**，`dsh-client-ui-settings-models` 只认 `llm-deepseek` 与 `llm-pi-ai` 两个 settings namespace，其余不渲染 provider 行；而本插件的 provider 是**代码注册的运行时路由**，模型目录来自网关 `/v1/models`，本就不属于那个界面管辖。要确认模型可用：看聊天窗口的模型选择器，或执行 `/wb2api-status`。
+
+---
+
+## 常见问题
+
+### 启动日志出现 provider 注册被拒（`DUPLICATE_ADAPTER`）
+
+插件注册 `workbuddy2api` 路由后，如果 `~/.dsh/settings.yaml` 里还留着同名 provider，会看到：
+
+```
+[workbuddy2api] provider 目录注册被拒：configurable provider "workbuddy2api" is already declared
+[workbuddy2api] 适配器注册被拒（DUPLICATE_ADAPTER）：an adapter for provider "workbuddy2api" is already registered
+```
+
+**dsh 仍会正常启动**（插件故意不把冲突抛出去，避免把一个本来可用的环境弄成起不来），但此时模型请求走的是 `settings.yaml` 里那份手工配置，自动元数据不生效。`/wb2api-status` 也会显示这条警告。
+
+**处理**：从 `~/.dsh/settings.yaml` 删除整段 `llm-pi-ai.providers.workbuddy2api`（连同它下面那批模型元数据），然后重启：
+
+```yaml
+llm-pi-ai:
+  providers:
+    workbuddy2api:      # ← 从这一行删到该 provider 段的末尾
+```
+
+**其余引用保持不变** —— provider id 没变，这些无需改动：
+
+```yaml
+agent-default-model:
+  provider: workbuddy2api       # 保持不变
+subagent-model-selection:
+  allowedModels:
+    - provider: workbuddy2api   # 保持不变
+```
+
+仓库自带脚本 `scripts/migrate-settings.ps1` 可按缩进精确摘除该段并自动备份（不重写整个文件，dsh 自己的注释与键顺序都保留）：
+
+```powershell
+# 先预览要删什么
+pwsh -File scripts/migrate-settings.ps1 -WhatIf
+
+# 确认后执行（请在 dsh 已关闭时做）
+pwsh -File scripts/migrate-settings.ps1
+```
+
+脚本会打印回滚命令（把自动备份拷回来即可）。
+
+> **为什么必须在 dsh 关闭时执行**：`settings.yaml` 是被**热监听**的（dsh-settings-file 用 chokidar 监视）。在 dsh 运行中删掉该段会立刻生效，而插件那份 provider 要等重启才会注册 —— 中间窗口里模型会不可用，正在进行的会话可能直接失败。
 
 ---
 
@@ -335,21 +268,29 @@ node node_modules/vitest/vitest.mjs run --config vitest.e2e.config.ts
 | `src/gateway-adapter.ts` | `LlmAdapter` 实现：请求组装 + SSE → `StreamChunk` |
 | `src/gateway-supervisor.ts` | 子进程托管：探测、spawn、探活、重启、回收 |
 | `src/sse.ts` | SSE 空闲超时读取、工具参数归一化、孤儿工具配对清理 |
-| `tests/unit/turn-key-contract.spec.ts` | 轮级聚合键的跨语言契约（见上文） |
-| `docs/` | 设计交接文档与截图 |
+| `tests/unit/turn-key-contract.spec.ts` | 轮级聚合键的跨语言契约 |
+| `docs/` | 设计文档与截图 |
 
 ### 为什么有几处写法看起来"多余"
 
 这些都有具体原因，改动前请先读对应注释：
 
-- **工具结果必须发成 `role:"tool"`** —— harness 把结果搭载在 user 角色消息里，原样发出会让网关的 `TurnKey` 取到工具输出、每个 step 换一个聚合键，**RequestID 碎片化因此静默复发**。详见上文与 `tests/unit/turn-key-contract.spec.ts`。
-- **`Config` 必须用 `Schema.object({...})` 构造** —— `settings.describe()` 会对每个注册项调用 `schema.toJSON()`，传裸函数会抛 `TypeError`，连带让模型设置页、主题、sidebar 的 settings API 全部失效（见 `src/config.ts`）。
+- **工具结果必须发成 `role:"tool"`** —— harness 把结果搭载在 user 角色消息里，原样发出会让网关的 `TurnKey` 取到工具输出、每个 step 换一个聚合键，**RequestID 碎片化因此静默复发**。详见 [轮级聚合](docs/turn-level-aggregation.md) 与 `tests/unit/turn-key-contract.spec.ts`。
+- **`Config` 必须用 `Schema.object({...})` 构造** —— `settings.describe()` 会对每个注册项调用 `schema.toJSON()`，传裸函数会抛 `TypeError`，连带让模型设置页、主题、sidebar 的 settings API 全部失效。
 - **SSE 按 `\n` 切行而不是 `\n\n` 切事件** —— 网关一帧 = 一行 `data:`。
 - **工具 `id` 靠 Map 按 `index` 复用** —— 只有首个分片带 `id`。
 - **`function.name` 只在非空时更新** —— 后续分片带 `""`（不是 `undefined`），直接覆盖会导致 `unknown tool ""`。
 - **残缺工具参数报 `max-tokens` 而不是 `tool-calls`** —— 报 `tool-calls` 会让 harness 执行半截 JSON 并把脏参数写进会话历史，报 `max-tokens` 才会丢弃并重试。
 - **`readWithIdleTimeout` 的 abort 分支也要 reject** —— 只清定时器会让 `Promise.race` 永远悬空，generator 既不产出也不返回。
 - **provider 注册冲突只记日志、不抛错** —— 冲突意味着用户还没迁移旧配置，此时抛错会让 dsh 起不来，把一个可用环境变成完全不可用。
+
+---
+
+## 延伸阅读
+
+- [轮级聚合：让一次对话只有一个 RequestID](docs/turn-level-aggregation.md) —— 为什么要按现在的方式序列化请求
+- [轮级聚合键的跨语言验证工具](tools/turnkey-verify/README.md) —— 用上游真实 Go 实现验证适配器产出
+- [方案与调研记录（2026-09-15）](docs/handoff-20260915-gateway-plugin.md) —— 设计取舍与上游能力调研
 
 ---
 

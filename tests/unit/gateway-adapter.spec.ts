@@ -721,7 +721,8 @@ describe('GatewayAdapter 元数据方法', () => {
   it('未知模型回退到兜底窗口而不抛错（契约：不校验路由）', async () => {
     const resolved = await make().resolveModel(PROVIDER, 'does-not-exist')
     expect(resolved).toMatchObject({ provider: PROVIDER, id: 'does-not-exist', name: 'does-not-exist' })
-    expect(resolved.context?.contextWindow).toBe(131072)
+    // 兜底值对齐网关四级查找的 DefaultContextWindow（1M），见 src/models.ts。
+    expect(resolved.context?.contextWindow).toBe(1000000)
   })
 
   it('prepareCall 绑定模型元数据与同一个适配器实例的 stream', async () => {

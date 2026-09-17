@@ -6,26 +6,37 @@
  * `context_length` / `supports_images` / `reasoning_supported_efforts`，
  * 这正是过去必须在 `settings.yaml` 手写 20 条元数据的根因。
  *
- * 字段来源（`workbuddy2api/internal/server/handler.go:229-302`）：
+ * 字段来源（核对基线：网关 `master` @ `a9ccace`）：
  *
- * | 网关字段 | 含义 | 备注 |
+ * | 网关字段 | 含义 | 网关侧出处 |
  * |---|---|---|
- * | `id` | 模型 id，带 `cn:` / `global:` realm 前缀 | `handler.go:234` |
- * | `context_length` | 上下文窗口（0 时网关兜底 131072） | `handler.go:238,241-243` |
- * | `max_output_tokens` | 输出上限 | `handler.go:239` |
- * | `supports_images` | 多模态（**仅在支持时出现**） | `handler.go:244-246` |
- * | `reasoning_supported_efforts` | 可选思考档位（空则不出现） | `handler.go:249-250` |
- * | `reasoning_default_effort` | 默认档位 | `handler.go:251-253` |
+ * | `id` | 模型 id，带 `cn:` / `global:` realm 前缀 | `internal/server/handler.go` `modelList()` |
+ * | `context_length` | 上下文窗口，**恒有值**：四级查找（上游动态值 → 静态种子表 → `model.json` 缓存 → models.dev 按需拉取）全未命中时兜底 1M | `internal/upstream/model_catalog.go` `ContextWindowListingV4()` |
+ * | `max_output_tokens` | 输出上限；**未收录时该键整体省略**（不会给 0） | `internal/upstream/model_catalog.go` `MaxOutputTokensListingV4()` |
+ * | `supports_images` | 多模态（**仅在支持时出现**） | `internal/server/handler.go` `applyModelInfoFields()` |
+ * | `reasoning_supported_efforts` | 可选思考档位（空则整键省略） | `internal/upstream/effort_catalog.go` `EffortListing()` |
+ * | `reasoning_default_effort` | 默认档位（仅在非空时出现） | 同上 |
  *
- * **已知上游局限（不要在插件侧掩盖）**：`global:` 分支（`handler.go:284-299`）
- * 把 `context_length` 硬编码为 131072，且**不下发** `max_output_tokens` 与
- * `supports_images`。因此 global 模型的窗口/输出上限是占位值而非真实值。
+ * 网关另外还透出一批**纯展示**富字段（`name` / `description` / `credits` /
+ * `tags` / `vendor` / `is_default` / `supports_reasoning` / `supports_tool_call` /
+ * `only_reasoning` / `max_allowed_size` / `reasoning_effort` / `reasoning_summary`，
+ * 同样空值省略，见 `applyModelInfoFields()`）。插件当前不消费它们。
+ *
+ * **两个域同口径**：`cn:` 与 `global:` 条目都走同一套四级查找与富字段映射，
+ * 不存在"某个域的窗口是占位值"的历史差别。旧版本网关曾把 `global:` 的
+ * `context_length` 硬编码为 131072 且不下发 `max_output_tokens`，上游已修复。
  *
  * @module dsh-workbuddy2api/models
  */
 
-/** 网关 `context_length` 缺失时的兜底值，与网关自身兜底保持一致（`handler.go:242`）。 */
-export const CONTEXT_WINDOW_FALLBACK = 131072
+/**
+ * 网关 `context_length` 缺失时的兜底值，与网关自身的四级查找兜底保持一致
+ * （`internal/upstream/context_catalog.go` 的 `DefaultContextWindow`）。
+ *
+ * 正常路径上该兜底不会被触发 —— 网关保证每个条目都带 `context_length`。
+ * 它只用于防御网关字段缺失/响应被中间层改写的情形。
+ */
+export const CONTEXT_WINDOW_FALLBACK = 1000000
 
 /** 归一化后的单个模型元数据。 */
 export interface GatewayModel {
@@ -38,7 +49,7 @@ export interface GatewayModel {
    * 请求发出前会被 {@link toWireModel} 还原成网关认得的形态。
    */
   id: string
-  /** 展示名。双域并存时在描述里标注 realm，避免同名模型无法区分。 */
+  /** 展示名（取裸 id；realm 由 {@link id} 上的前缀区分）。 */
   name: string
   /** 上下文窗口，保证为正数。 */
   contextWindow: number
@@ -65,7 +76,7 @@ interface RawModelEntry {
 /**
  * 拆解网关模型 id 的 realm 前缀。
  *
- * 与网关 `resolveModel`（`resolve_model.go:13-23`）语义严格对称：
+ * 与网关 `resolveModel`（`internal/server/resolve_model.go`）语义严格对称：
  * 取第一个 `:`，前段**恰为** `cn` / `global` 才视为前缀（大小写敏感）；
  * 否则整串视为裸名，realm 落到 `cn`。
  *
@@ -84,8 +95,9 @@ export function parseModelId(rawId: string): { realm: 'cn' | 'global'; bareId: s
  * 把 dsh 侧的模型 id 还原成网关认得的线格式。
  *
  * 无前缀 id 一律补 `cn:`：网关对裸名的判定虽然也是 `cn`，但**显式前缀**能让
- * 选号闭包正确过滤 realm 集合（`handler.go:430-434` 说明裸名会在跨域粘性会话里
- * 被错误钉回 CN 集合）。补前缀不改变单域环境下的行为，却能消除歧义。
+ * 选号闭包正确过滤 realm 集合（裸名会在跨域粘性会话里被错误钉回 CN 集合，
+ * 见 `internal/server/resolve_model.go` 的协议说明）。补前缀不改变单域环境下的
+ * 行为，却能消除歧义。
  *
  * @param model - dsh 传入的模型 id（可能带也可能不带 realm 前缀）。
  * @returns 可直接放进请求体的网关模型名。
@@ -112,7 +124,7 @@ function toPositiveNumber(value: unknown): number | undefined {
  *
  * 映射规则（对照 `LlmResolvedModelInfo` 的字段语义）：
  * - `context_length` → `context.contextWindow`；缺失/非正数时用
- *   {@link CONTEXT_WINDOW_FALLBACK} 兜底（与网关 `handler.go:242` 一致）。
+ *   {@link CONTEXT_WINDOW_FALLBACK} 兜底（1M，对齐网关四级查找的兜底值）。
  * - `max_output_tokens` → `defaultMaxTokens`；缺失时**不声明**，让网关自己决定。
  * - `supports_images` **仅在支持时出现**，故缺席即「仅文本」，映射为
  *   `inputModalities: ['text']`（显式否定能力，而非 unknown）。
@@ -158,11 +170,10 @@ export function mapModel(raw: RawModelEntry, policy: 'strip-cn' | 'keep'): Gatew
  *
  * 关于重名：**两种策略下 CN 与 global 都不会撞 id**。`keep` 下两侧都带前缀；
  * `strip-cn` 下 CN 剥成裸名、global 仍带 `global:` 前缀。因此 realm 重名不是问题，
- * 这里的去重只处理**同一 id 重复出现**的情形（网关名单是「探测结果 ∪ 静态 overlay」
- * 合并而来，理论上可能重复）。
+ * 这里的去重只处理**同一 id 重复出现**的情形（网关名单由探测结果与查找链拼装，
+ * 理论上可能重复）。
  *
- * 重复时保留**信息更完整**的那条：优先保留带 `max_output_tokens` 的条目。这与
- * `strip-cn` 的域语义一致 —— CN 侧有真实窗口/输出上限，global 侧是占位值。
+ * 重复时保留**信息更完整**的那条：优先保留带 `max_output_tokens` 的条目。
  *
  * @param body - `GET /v1/models` 的已解析 JSON。
  * @param policy - realm 前缀策略。

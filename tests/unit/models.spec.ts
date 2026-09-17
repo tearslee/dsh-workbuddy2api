@@ -20,7 +20,7 @@ describe('parseModelId', () => {
   })
 
   it('非 realm 前缀不剥离，整串视为裸名', () => {
-    // 大小写敏感：网关 resolve_model.go:19 只认精确小写枚举。
+    // 大小写敏感：网关 resolveModel 只认精确小写枚举。
     expect(parseModelId('CN:foo')).toEqual({ realm: 'cn', bareId: 'CN:foo' })
     expect(parseModelId('other:foo')).toEqual({ realm: 'cn', bareId: 'other:foo' })
   })
@@ -152,9 +152,9 @@ describe('mapModelCatalog', () => {
   })
 
   it('strip-cn 下 CN 与 global 同名模型不会撞 id（global 保留前缀）', () => {
-    // 实测：global:hy3 的 context_length 被网关硬编码为 131072 且无 max_output_tokens，
-    // 而 cn:hy3 有真实窗口与输出上限。两者 id 不同，各自成条、互不覆盖 ——
-    // 这正是 strip-cn 必须保留 global: 前缀的原因。
+    // 两域各有一条同名模型：它们 id 不同（global 保留前缀），各自成条、互不覆盖
+    // —— 这正是 strip-cn 必须保留 global: 前缀的原因。下面输入的字段差异只是为了
+    // 让两条可区分，不代表上游现状（两个域现为同一套四级查找口径）。
     const catalog = mapModelCatalog({
       data: [
         { id: 'cn:hy3', context_length: 192000, max_output_tokens: 64000, supports_images: true },

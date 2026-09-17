@@ -41,8 +41,9 @@ export const SETTINGS_NS = 'llm-workbuddy2api'
 /**
  * 模型 id 的 realm 前缀策略。
  *
- * 网关 `/v1/models` 返回的 id 带 `cn:` / `global:` 前缀（`handler.go:234`），
- * 而 `resolveModel`（`resolve_model.go:13-23`）对**无前缀**模型名一律判为 `cn` 域。
+ * 网关 `/v1/models` 返回的 id 带 `cn:` / `global:` 前缀（`internal/server/handler.go`
+ * 的 `modelList()`），而 `resolveModel`（`internal/server/resolve_model.go`）对
+ * **无前缀**模型名一律判为 `cn` 域。
  * 因此两种策略在现有单域（仅 CN 账号）环境下行为**完全一致**：
  *
  * - `strip-cn`（默认）—— 剥掉 `cn:` 前缀，`global:` 前缀保留。

@@ -2,11 +2,19 @@
 
 | 项 | 值 |
 |---|---|
-| 状态 | 待实施（方案已定，未编码） |
-| 目标产物 | 独立发布的 dsh 插件 `dsh-workbuddy2api`，npm 包名待定 |
+| 状态 | **已实施**（本文档是 2026-09-15 的方案与调研记录，代码已按此落地） |
+| 目标产物 | 独立发布的 dsh 插件 `dsh-workbuddy2api` |
 | 上游依赖 | [Sliverkiss/workbuddy2api](https://github.com/Sliverkiss/workbuddy2api)（Go，MIT，**只消费不改**） |
 | 工程骨架来源 | `deepseek-harness-codearts`（gitee.com/iJetLi/deepseek-harness-codearts）的 buddy provider 构建链 |
 | 环境 | dsh `0.1.6-alpha.1`（单份全局安装，`<dsh 安装目录>/node_modules/@deepseek-ai/dsh`）|
+
+> **读这份文档前请先看这里**：下文所有 `handler.go:229-256` 之类的**行号引用**对应的
+> 是 2026-09-15 的上游基线 `3b87c14`。上游此后前进了 127 个提交（当前基线 `a9ccace`），
+> 行号已整体漂移 —— 检索时请以**函数名**为准（`modelList()`、`healthz()`、
+> `applyModelInfoFields()` …），不要按行号跳转。
+>
+> 当前行为以 [../README.md](../README.md) 与
+> [turn-level-aggregation.md](turn-level-aggregation.md) 为准。
 
 ---
 
@@ -26,16 +34,22 @@
 
 ### 2.1 决定性发现：网关已经透出全部元数据，插件不需要任何兜底表
 
-`workbuddy2api/internal/server/handler.go:229-256` 的 `modelList()` 已经返回：
+`workbuddy2api/internal/server/handler.go` 的 `modelList()` 已经返回：
 
-| 网关字段 | 含义 | 代码位置 |
+| 网关字段 | 含义 | 代码位置（按函数名检索） |
 |---|---|---|
-| `id` | 模型 id，**带 realm 前缀**（`"cn:" + mi.ID`） | `handler.go:234` |
-| `context_length` | 上下文窗口（缺失时兜底 131072） | `handler.go:238,241-243` |
-| `max_output_tokens` | 输出上限 | `handler.go:239` |
-| `supports_images` | 多模态能力（仅在支持时出现） | `handler.go:244-246` |
-| `reasoning_supported_efforts` | 可选思考档位 | `handler.go:249-250` |
-| `reasoning_default_effort` | 默认档位 | `handler.go:251-253` |
+| `id` | 模型 id，**带 realm 前缀**（`"cn:" + mi.ID`） | `modelList()` |
+| `context_length` | 上下文窗口 | `upstream/model_catalog.go` `ContextWindowListingV4()` |
+| `max_output_tokens` | 输出上限（未收录时该键省略） | `upstream/model_catalog.go` `MaxOutputTokensListingV4()` |
+| `supports_images` | 多模态能力（仅在支持时出现） | `applyModelInfoFields()` |
+| `reasoning_supported_efforts` | 可选思考档位 | `upstream/effort_catalog.go` `EffortListing()` |
+| `reasoning_default_effort` | 默认档位 | 同上 |
+
+> **方案期结论已部分被上游修正**（2026-09-17 复核）：当时 `context_length` 在零值时
+> 兜底 131072、且 `global:` 分支不下发 `max_output_tokens`；上游现已改为**四级查找链**
+> （上游动态值 → 静态种子表 → `model.json` 缓存 → models.dev，全 miss 才兜底 1M）
+> 并两域同口径透出富字段。**插件侧的收益不变**：它依旧是把这批非标准字段翻译成
+> dsh `LlmResolvedModelInfo` 的那一层。
 
 代码注释写明这是 **issue #84「客户端可发现档位，不再盲传」** 的产物（`handler.go:247-248`）。
 
@@ -250,14 +264,14 @@ llm-pi-ai:
 
 ## 7. 关联文档与证据索引
 
-- 上游仓库：https://github.com/Sliverkiss/workbuddy2api （master `3b87c14`）
+- 上游仓库：https://github.com/Sliverkiss/workbuddy2api （本文档的调研基线为 `3b87c14`；当前基线 `a9ccace`）
 - 工程骨架来源：https://gitee.com/iJetLi/deepseek-harness-codearts
 - dsh 插件开发教程：https://dev.to/henry_lin_3ac6363747f45b4/deepseek-harness-dsh-cha-jian-kai-fa-jiao-cheng-4h6j
 - dsh 自定义 provider（用户视角）：https://findharness.com/blog/deepseek-harness-custom-model-providers
 - 本机 dsh 插件安装/排障手册：`~/.workbuddy/skills/dsh-plugin-install/SKILL.md`
 - 当日调研记录：本机 `.workbuddy/memory/2026-09-15.md`（「把 workbuddy2api 改造成 dsh 插件」两节）
 
-**证据行号速查**
+**证据行号速查**（**行号对应基线 `3b87c14`，已漂移**——仅供回溯当时的调研，检索请用函数名）
 
 | 主题 | 位置 |
 |---|---|
