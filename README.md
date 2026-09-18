@@ -67,9 +67,17 @@
 
 ## 安装
 
-> **尚未发布到 npm**（`dsh plugin add dsh-workbuddy2api` 暂时会 404）。用下面的 Release 路径安装。
+### 方式一：一条命令直装（推荐）
 
-### 方式一：从 Release 安装（推荐）
+**不需要先下载文件** —— pnpm 支持直接以 Release 的 tarball URL 作为依赖（已实测：装出来是真实目录、非 `link:`）：
+
+```bash
+dsh plugin --profile web add https://github.com/tearslee/dsh-workbuddy2api/releases/download/v0.3.0/dsh-workbuddy2api-0.3.0.tgz
+```
+
+升级时把 URL 里的版本号换掉即可。
+
+### 方式二：先下载再本地安装
 
 在 [Releases](https://github.com/tearslee/dsh-workbuddy2api/releases/latest) 下载 `dsh-workbuddy2api-<版本>.tgz`，然后：
 
@@ -77,7 +85,7 @@
 dsh plugin --profile web add file:/绝对路径/dsh-workbuddy2api-0.3.0.tgz
 ```
 
-### 方式二：从源码安装
+### 方式三：从源码安装
 
 ```bash
 git clone https://github.com/tearslee/dsh-workbuddy2api
@@ -89,6 +97,8 @@ dsh plugin --profile web add file:./dist/dsh-workbuddy2api-0.3.0.tgz
 ```
 
 > **不要用 `dsh plugin install <源码目录>`**：pnpm 会写成 `link:` 依赖，而 Windows 上工具进程创建的 junction 不可遍历，会导致 pnpm 全面失效。用 `npm pack` / `pnpm pack` 出的 tarball（解包成真实目录）可规避。
+
+> **关于 npm registry**：本包**尚未发布到 npm**，因此 `dsh plugin add dsh-workbuddy2api` 会 404 —— 请用上面三种方式之一。发布后会更新这里。
 
 **装完重启 dsh**，然后在 dsh 里执行：
 
