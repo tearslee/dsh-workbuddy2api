@@ -1,0 +1,15 @@
+# 统一换行与文本判定，避免 Windows / macOS 贡献者把整个文件重写成 CRLF。
+# 本仓库主要在 Windows 上开发（dsh 宿主是 Windows），因此**源码统一 LF**：
+# 换行差异会让每次提交出现无意义的整文件 diff，也会干扰脚本的 shebang 与 heredoc。
+* text=auto eol=lf
+
+# 二进制/归档：不做换行转换，也不要在 diff 里显示。
+*.png binary
+*.jpg binary
+*.zip binary
+*.tgz binary
+*.exe binary
+
+# 锁文件由工具生成，合并冲突时保留双方会掩盖真实依赖变化。
+pnpm-lock.yaml merge=binary
+package-lock.json merge=binary

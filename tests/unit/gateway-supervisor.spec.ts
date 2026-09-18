@@ -208,11 +208,33 @@ describe('GatewaySupervisor.countAuthFiles', () => {
     expect(supervisor.countAuthFiles()).toBe(2)
   })
 
-  it('未配置 repoPath 或无 auths 目录时返回 0', () => {
+  it('未配置 repoPath 或无 auths 目录时返回 0（回落到插件运行目录）', () => {
     const { runtime } = makeSubprocess()
-    expect(new GatewaySupervisor({ config: resolveConfig({}), subprocess: runtime, logger: silentLogger }).countAuthFiles()).toBe(0)
+    // 无 repoPath 时基准是插件运行目录 ~/.dsh/wb2api；本机若那里恰有凭证文件，
+    // 断言会变得依赖环境，因此只断言「不抛错且是非负整数」。
+    const count = new GatewaySupervisor({ config: resolveConfig({}), subprocess: runtime, logger: silentLogger }).countAuthFiles()
+    expect(Number.isInteger(count)).toBe(true)
+    expect(count).toBeGreaterThanOrEqual(0)
     const dir = mkdtempSync(join(tmpdir(), 'wb2api-'))
     expect(new GatewaySupervisor({ config: resolveConfig({ repoPath: dir }), subprocess: runtime, logger: silentLogger }).countAuthFiles()).toBe(0)
+  })
+
+  it('workingDir 优先于 repoPath（与网关真实 cwd 同源）', () => {
+    const repo = mkdtempSync(join(tmpdir(), 'wb2api-repo-'))
+    const work = mkdtempSync(join(tmpdir(), 'wb2api-work-'))
+    mkdirSync(join(repo, 'auths'))
+    mkdirSync(join(work, 'auths'))
+    writeFileSync(join(repo, 'auths', 'repo.json'), '{}')
+    writeFileSync(join(work, 'auths', 'w1.json'), '{}')
+    writeFileSync(join(work, 'auths', 'w2.json'), '{}')
+    const { runtime } = makeSubprocess()
+    const supervisor = new GatewaySupervisor({
+      config: resolveConfig({ repoPath: repo, workingDir: work }),
+      subprocess: runtime,
+      logger: silentLogger,
+    })
+    // 数的是网关真正会读的那个目录，不是 repoPath。
+    expect(supervisor.countAuthFiles()).toBe(2)
   })
 })
 

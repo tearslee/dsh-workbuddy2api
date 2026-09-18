@@ -91,6 +91,31 @@ export interface GatewayPluginConfig {
   crashRestartLimit: number
   /** 传给网关子进程的显式环境变量。 */
   env: Record<string, string>
+  /**
+   * 预编译二进制的发布仓库（`owner/name`）。
+   *
+   * 默认是本插件仓库 —— 它的 Actions 从**上游源码**交叉编译三平台产物并挂 Release。
+   * 上游自身不提供任何预编译产物，所以这里指向的不是上游。
+   */
+  binaryReleaseRepo: string
+  /**
+   * 覆盖二进制下载根地址（自建镜像 / 内网分发 / 钉住某个 tag）。
+   *
+   * 为空时用 `https://github.com/<binaryReleaseRepo>/releases/latest/download`；
+   * 需要钉版本就写成 `.../releases/download/v0.3.0`。该地址下应同时存在
+   * `<产物名>.zip` 与 `SHA256SUMS.txt`。
+   */
+  binaryReleaseBase: string
+  /**
+   * dsh 启动时若找不到二进制，是否自动下载。
+   *
+   * **默认 false**：下载发生在首次启动这种隐式时机时，离线/内网环境只会看到一堆
+   * 报错噪音，而用户并没有要求联网。显式执行 `/wb2api-setup` 时**无视本开关**
+   * （那是用户的明确意图）。
+   */
+  autoDownloadBinary: boolean
+  /** 登录默认使用的 realm；为空则在 `/wb2api-setup` 里询问（或要求显式传参）。 */
+  defaultRealm: string
 }
 
 export const DEFAULT_CONFIG: GatewayPluginConfig = {
@@ -110,6 +135,10 @@ export const DEFAULT_CONFIG: GatewayPluginConfig = {
   graceMs: 5000,
   crashRestartLimit: 3,
   env: {},
+  binaryReleaseRepo: 'tearslee/dsh-workbuddy2api',
+  binaryReleaseBase: '',
+  autoDownloadBinary: false,
+  defaultRealm: '',
 }
 
 /**
@@ -140,6 +169,10 @@ export const Config: AnySchema = Schema.object({
   graceMs: Schema.natural().default(DEFAULT_CONFIG.graceMs),
   crashRestartLimit: Schema.natural().default(DEFAULT_CONFIG.crashRestartLimit),
   env: Schema.dict(Schema.string()).default({}),
+  binaryReleaseRepo: Schema.string().default(DEFAULT_CONFIG.binaryReleaseRepo),
+  binaryReleaseBase: Schema.string().default(DEFAULT_CONFIG.binaryReleaseBase),
+  autoDownloadBinary: Schema.boolean().default(DEFAULT_CONFIG.autoDownloadBinary),
+  defaultRealm: Schema.string().default(DEFAULT_CONFIG.defaultRealm),
 }) as unknown as AnySchema
 
 /**
@@ -157,6 +190,8 @@ export function resolveConfig(raw: Partial<GatewayPluginConfig> | undefined): Ga
   merged.env = { ...DEFAULT_CONFIG.env, ...(raw?.env ?? {}) }
   if (merged.realmPrefixPolicy !== 'keep') merged.realmPrefixPolicy = 'strip-cn'
   if (!Number.isFinite(merged.listenPort) || merged.listenPort <= 0) merged.listenPort = DEFAULT_CONFIG.listenPort
+  // defaultRealm 只认两个合法值；其余（含默认空串）归一为「未指定」，由命令层询问用户。
+  if (merged.defaultRealm !== 'cn' && merged.defaultRealm !== 'global') merged.defaultRealm = ''
   return merged
 }
 

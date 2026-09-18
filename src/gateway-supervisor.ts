@@ -19,6 +19,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { SubprocessHandle, SubprocessRuntime } from '@deepseek-ai/dsh-subprocess'
 import { gatewayOrigin, gatewayPort, type GatewayPluginConfig } from './config.js'
+import { defaultRuntimeDir } from './gateway-binary.js'
 
 /** 探活结果。 */
 export interface HealthReport {
@@ -196,6 +197,29 @@ export class GatewaySupervisor {
   }
 
   /**
+   * 决定子进程的工作目录。
+   *
+   * 顺序（先显式配置，再推断）：
+   *  1. `workingDir` —— 用户显式指定；
+   *  2. `repoPath` —— 用户有网关源码，其 `config.json` / `auths/` 就在这里；
+   *  3. **`~/.dsh/wb2api/`（插件的运行目录）** —— 二进制由 `/wb2api-setup` 下载时，
+   *     配置与凭证都放在那里（见 gateway-binary.ts 的 `ensureRuntimeDir`）；
+   *  4. 可执行文件所在目录 —— 最后的兜底。
+   *
+   * 第 3 条不能省：网关的 `config.json` / `auth_dir` / `state_file` 全是**相对 cwd**
+   * 的路径，cwd 指错地方就会去读一个不存在的配置（表现为启动即退出）。
+   */
+  private resolveWorkingDir(argv0: string): string {
+    const { workingDir, repoPath } = this.options.config
+    if (workingDir.length > 0) return workingDir
+    if (repoPath.length > 0) return repoPath
+    // 运行目录存在（含 config.json）时优先用它，否则退回可执行文件所在目录。
+    const runtime = join(homedir(), '.dsh', 'wb2api')
+    if (existsSync(join(runtime, 'config.json'))) return runtime
+    return join(argv0, '..')
+  }
+
+  /**
    * 探活 `GET /healthz`（**该端点无需鉴权**）。
    *
    * @returns 探活结果；端口无监听时返回 undefined。
@@ -243,12 +267,19 @@ export class GatewaySupervisor {
     }
   }
 
-  /** 统计 `auths/` 目录下的账号凭证文件数（诊断「网关起来了但没有账号」）。 */
+  /**
+   * 统计网关实际读取的 `auths/` 目录下的凭证文件数（诊断「网关起来了但没有账号」）。
+   *
+   * 目录按网关**真实的工作目录**推导（`workingDir` → `repoPath` → 插件运行目录），
+   * 与 `resolveWorkingDir()` 同源：写死 `repoPath/auths` 会让「自动下载二进制」的用户
+   * 永远看到 0（凭证在运行目录里，而他没配 repoPath）。
+   */
   countAuthFiles(): number {
-    const repoPath = this.options.config.repoPath
-    if (repoPath.length === 0) return 0
+    const cwd = this.options.config.workingDir.length > 0
+      ? this.options.config.workingDir
+      : this.options.config.repoPath.length > 0 ? this.options.config.repoPath : defaultRuntimeDir()
     try {
-      const dir = join(repoPath, 'auths')
+      const dir = join(cwd, 'auths')
       if (!existsSync(dir)) return 0
       return readdirSync(dir).filter(name => name.endsWith('.json')).length
     } catch {
@@ -291,9 +322,7 @@ export class GatewaySupervisor {
 
     // 2. 拉起受管进程。
     const argv0 = await this.resolveBinary()
-    const cwd = this.options.config.workingDir.length > 0
-      ? this.options.config.workingDir
-      : this.options.config.repoPath.length > 0 ? this.options.config.repoPath : join(argv0, '..')
+    const cwd = this.resolveWorkingDir(argv0)
 
     this.options.logger.info(`[workbuddy2api] 启动网关：${argv0}（cwd=${cwd}）`)
     const handle = this.options.subprocess.spawn({

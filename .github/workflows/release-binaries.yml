@@ -1,0 +1,182 @@
+# 从上游源码交叉编译 workbuddy2api 网关，并作为 Release 产物发布。
+#
+# 为什么由本仓库发布二进制（而不是让用户自己装 Go 编译）：
+#   上游 Sliverkiss/workbuddy2api 明确不提供预编译 release，而「装 Go + git clone +
+#   go build」是插件用户能遇到的最高门槛。产物是**从上游源码原样编译**出来的，
+#   本仓库不修改上游一行代码（见下方 patch 校验步骤），许可证与来源仍归上游。
+#
+# 触发方式：
+#   - push tag `v*`（例如 v0.3.0）→ 构建并发布 Release，插件默认从
+#     `releases/latest/download/...` 取产物，因此无需把版本号烧进插件代码；
+#   - 手动 workflow_dispatch → 只构建并上传 artifact，便于验证（不建 Release）。
+#
+# 产物形态刻意选 **zip**：插件侧用内置的解压实现读取（见 src/zip.ts），
+# Windows / macOS / Linux 一套逻辑，用户端不需要 unzip / tar / python。
+
+name: release-binaries
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      upstream_ref:
+        description: '上游 workbuddy2api 的 ref（分支/tag/commit）；留空用 master'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+env:
+  # 上游仓库与要构建的包（与 README 里给用户的命令一致：go build -o wb2a-server ./cmd/server）。
+  UPSTREAM_REPO: Sliverkiss/workbuddy2api
+  GO_VERSION: '1.26.x'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: windows
+            goarch: amd64
+            binary: wb2a-server.exe
+            asset: wb2a-server-windows-amd64.zip
+          - goos: linux
+            goarch: amd64
+            binary: wb2a-server
+            asset: wb2a-server-linux-amd64.zip
+          - goos: darwin
+            goarch: arm64
+            binary: wb2a-server
+            asset: wb2a-server-darwin-arm64.zip
+          - goos: darwin
+            goarch: amd64
+            binary: wb2a-server
+            asset: wb2a-server-darwin-amd64.zip
+    steps:
+      - name: Checkout upstream gateway source
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.UPSTREAM_REPO }}
+          # 固定到构建时可验证的提交；workflow_dispatch 时也可手工指定。
+          ref: ${{ github.event.inputs.upstream_ref || 'master' }}
+          path: upstream
+
+      - name: Record upstream revision
+        id: upstream
+        working-directory: upstream
+        run: |
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "short=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Assert upstream source is unmodified
+        working-directory: upstream
+        run: |
+          # 本工作流只编译、不修改上游。若将来有人在这里加了 patch 步骤，
+          # 这一步会失败并强制把改动显式记录下来 —— 避免"悄悄改了上游代码"。
+          #
+          # 另一个作用：保持工作区干净，编译出的二进制才会带
+          # `vcs.modified=false`（见下面 Build 步骤的注释）。
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "::error::上游源码在工作流内被修改，请显式记录改动来源"
+            git status --porcelain
+            exit 1
+          fi
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: upstream/go.sum
+
+      - name: Build ${{ matrix.goos }}/${{ matrix.goarch }}
+        working-directory: upstream
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: '0'
+        run: |
+          # 产物**刻意输出到仓库目录之外**（../dist），两个原因：
+          #   1. 往工作区里写文件会让 Go 把二进制标记成 `vcs.modified=true`
+          #      （实测：即使只是产物本身，也会盖住「源码未被改动」这个事实）；
+          #   2. 发布目录与源码目录分离，`zip` / 校验步骤不会反过来污染源码树。
+          mkdir -p ../dist
+          go build -trimpath -ldflags "-s -w" -o "../dist/${{ matrix.binary }}" ./cmd/server
+          ls -l "../dist/${{ matrix.binary }}"
+
+      - name: Verify provenance metadata
+        working-directory: upstream
+        run: |
+          # 发布出去的二进制必须能自证「编译自未修改的上游源码」。
+          # 这里读的是嵌入二进制的构建信息，不是我们的自述。
+          go version -m "../dist/${{ matrix.binary }}" | tee /tmp/goversion.txt
+          grep -q 'vcs.modified=false' /tmp/goversion.txt || {
+            echo "::error::二进制被标记为 vcs.modified=true，说明构建时上游源码树不干净"
+            exit 1
+          }
+          echo "upstream_revision=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+
+      - name: Package as zip
+        working-directory: dist
+        run: |
+          # -X 丢弃额外文件属性，产物在所有平台上解压结果一致。
+          zip -X "${{ matrix.asset }}" "${{ matrix.binary }}"
+          unzip -l "${{ matrix.asset }}"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: dist/${{ matrix.asset }}
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Generate SHA256SUMS.txt
+        working-directory: artifacts
+        run: |
+          # 插件在安装前会校验这个文件；缺失或与产物不符时拒绝安装（见 gateway-binary.ts）。
+          #
+          # 格式必须是 `sha256sum -c` 认识的 `<64位十六进制>  <文件名>`：
+          # 插件侧的解析器（parseChecksums）与之对应，多一个空格都会导致"清单里没有本平台条目"。
+          sha256sum ./*.zip > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+          # 自检：确认清单能被标准工具校验通过（而不是只生成了一个看起来对的文件）。
+          sha256sum -c SHA256SUMS.txt
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/*.zip
+            artifacts/SHA256SUMS.txt
+          generate_release_notes: true
+          body: |
+            预编译的 **workbuddy2api 网关**二进制，由本仓库的 GitHub Actions
+            从上游 [${{ env.UPSTREAM_REPO }}](https://github.com/${{ env.UPSTREAM_REPO }})
+            源码交叉编译产生（未修改上游代码）。
+
+            通常**不需要手工下载**：dsh 插件 `dsh-workbuddy2api` 的 `/wb2api-setup`
+            会自动取用 `releases/latest/download/` 下的产物并校验 SHA256。
+
+            手工安装时请一并下载 `SHA256SUMS.txt` 校验：
+
+            ```bash
+            sha256sum -c SHA256SUMS.txt
+            ```
+
+            许可证与免责声明归上游仓库所有。

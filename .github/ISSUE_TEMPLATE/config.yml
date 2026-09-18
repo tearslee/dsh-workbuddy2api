@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: workbuddy2api 网关本身的问题
+    url: https://github.com/Sliverkiss/workbuddy2api/issues
+    about: 账号池 / 熔断冷却 / 签到 / 上游报错属于网关（上游仓库），不属于本插件。
+  - name: dsh（DeepSeek Harness）本身的问题
+    url: https://github.com/deepseek-ai/deepseek-harness/issues
+    about: 模型选择器、会话、设置页等宿主行为问题请在 dsh 反馈。

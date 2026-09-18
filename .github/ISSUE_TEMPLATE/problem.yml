@@ -1,0 +1,72 @@
+# 配置问题（装完不能用、报错、行为不符预期）
+#
+# 请先跑 `/wb2api-setup` 与 `/wb2api-status` 并把输出贴上来 —— 这两条命令已经
+# 覆盖了绝大多数原因（没有二进制 / 没有账号 / 账号在冷却 / provider 路由被旧配置占用）。
+# 提交前请**删掉输出里的 token、api_key、uid 与昵称**。
+
+name: '配置/使用问题'
+description: 插件装上后不能用、报错、或行为与文档不符
+title: '[问题] '
+labels: ['question']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢反馈。为避免来回确认，请尽量把下面的信息填全 —— 尤其是**原始报错文本**。
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: 发生了什么
+      description: 你期望的结果，以及实际看到的结果。
+      placeholder: 例如：执行 /wb2api-setup 后网关起来了，但模型请求一直 401。
+    validations:
+      required: true
+  - type: textarea
+    id: status-output
+    attributes:
+      label: /wb2api-status 的输出
+      description: 请**删掉 token / api_key / uid / 昵称**后再贴。
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: dsh 启动日志里的相关行
+      description: 搜 `[workbuddy2api]` 即可（含 provider 注册、网关启动、自动下载等记录）。
+      render: text
+    validations:
+      required: false
+  - type: input
+    id: plugin-version
+    attributes:
+      label: 插件版本
+      description: 看 `~/.dsh/profiles/<profile>/package.json` 里 dsh-workbuddy2api 的版本，或 /wb2api-status 的输出。
+      placeholder: '0.3.0'
+    validations:
+      required: true
+  - type: input
+    id: env
+    attributes:
+      label: 操作系统与 dsh 版本
+      placeholder: 'Windows 11 / dsh 0.1.6-alpha.1'
+    validations:
+      required: true
+  - type: dropdown
+    id: gateway-source
+    attributes:
+      label: 网关二进制是怎么来的
+      options:
+        - 由 /wb2api-setup 自动下载（本仓库 Release）
+        - 我自己 go build 的（配置了 binaryPath）
+        - 复用外部已常驻的网关进程
+        - 不确定
+    validations:
+      required: true
+  - type: checkboxes
+    id: confirm
+    attributes:
+      label: 确认
+      options:
+        - label: 我已删除粘贴内容里的 token / api_key / uid / 昵称等隐私信息
+          required: true

@@ -1,0 +1,95 @@
+# 把插件本身打包成安装用的 tarball，并挂到同 tag 的 Release 上。
+#
+# 为什么需要：dsh 安装插件走的是 pnpm，而 `dsh plugin install <源码目录>` 会写成
+# `link:` 依赖（Windows 上工具进程创建的 junction 不可遍历，会导致 pnpm 全面失效）。
+# 因此给用户的正确形态是**一个 .tgz**，解包成真实目录 —— 这个工作流负责产出它。
+#
+# 与 release-binaries.yml 的关系：两者都由 `v*` tag 触发，各自往同一个 Release 追加
+# 文件（softprops/action-gh-release 对已存在的 release 是更新而非失败）。
+# 一个是「网关二进制」，一个是「插件本体」，互不依赖。
+
+name: release-plugin
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Typecheck
+        run: node node_modules/typescript/bin/tsc -p tsconfig.json --noEmit
+
+      - name: Run unit tests
+        run: node node_modules/vitest/vitest.mjs run
+
+      - name: Verify tag matches package.json version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          # tag 与包版本不一致会让用户装到「名字是 0.3.0 内容却是 0.2.0」的包。
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG="$(node -p "require('./package.json').version")"
+          echo "tag=$TAG package=$PKG"
+          if [ "$TAG" != "$PKG" ]; then
+            echo "::error::tag v$TAG 与 package.json 的 $PKG 不一致"
+            exit 1
+          fi
+
+      - name: Build lib/
+        run: node node_modules/typescript/bin/tsc -p tsconfig.json
+
+      - name: Assert build artifacts exist
+        run: |
+          # 防「假成功」：本仓库踩过 pnpm build 退出码 0 但 lib/ 没生成的坑。
+          test -f lib/index.js
+          test -f lib/zip.js
+          test -f lib/gateway-binary.js
+          test -f lib/login.js
+          test -f lib/setup.js
+
+      - name: Pack tarball
+        run: |
+          # --ignore-scripts：prepack 会再跑一次 tsc，这里已显式构建过。
+          npm pack --ignore-scripts --pack-destination dist
+          ls -l dist
+
+      - name: Assert tarball contents
+        run: |
+          # 安装包必须自带 cordis.patch.yml（插件靠它挂进 profile 的 bundle 层），
+          # 且不应把源码/测试打进去。
+          tar -tzf dist/*.tgz | sort | tee /tmp/contents.txt
+          grep -q 'package/cordis.patch.yml' /tmp/contents.txt
+          grep -q 'package/lib/index.js' /tmp/contents.txt
+          if grep -q 'package/src/' /tmp/contents.txt; then
+            echo "::error::tarball 里不应包含 src/"; exit 1
+          fi
+
+      - name: Upload tarball artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: plugin-tarball
+          path: dist/*.tgz
+          if-no-files-found: error
+
+      - name: Publish tarball to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.tgz
+          # 这个 job 不负责写 release 说明，避免与 release-binaries 互相覆盖。
+          append_body: true

@@ -1,0 +1,57 @@
+# 插件自身的 CI：类型检查 + 单测。
+#
+# 刻意**不跑** `pnpm build`：本仓库踩过「pnpm build 假成功、lib/ 不生成」的坑
+# （日志只有 cmd.exe 欢迎语，退出码却是 0），所以构建一律直调 tsc，
+# 并在最后断言 lib/index.js 真的产出了 —— 让"假成功"在 CI 上直接红掉。
+#
+# 集成测试（tests/e2e）会真实消耗账号额度，因此**不在 CI 里跑**（需显式开环境变量）。
+
+name: ci
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Windows 是主要使用场景（本插件最初就为 Windows 上的 dsh 而写），
+        # ubuntu 用来确认没有隐含依赖 Windows 路径语义的代码。
+        os: [ubuntu-latest, windows-latest]
+        node: ['22.x', '24.x']
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Typecheck
+        run: node node_modules/typescript/bin/tsc -p tsconfig.json --noEmit
+
+      - name: Build
+        run: node node_modules/typescript/bin/tsc -p tsconfig.json
+
+      - name: Assert build artifacts exist
+        shell: bash
+        run: |
+          # 断言 lib/ 真产出（防「假成功」回归）。
+          test -f lib/index.js
+          test -f lib/zip.js
+          test -f lib/gateway-binary.js
+          test -f lib/login.js
+          test -f lib/setup.js
+
+      - name: Unit tests
+        run: node node_modules/vitest/vitest.mjs run
