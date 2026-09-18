@@ -151,12 +151,20 @@ jobs:
         run: |
           # 插件在安装前会校验这个文件；缺失或与产物不符时拒绝安装（见 gateway-binary.ts）。
           #
-          # 格式必须是 `sha256sum -c` 认识的 `<64位十六进制>  <文件名>`：
-          # 插件侧的解析器（parseChecksums）与之对应，多一个空格都会导致"清单里没有本平台条目"。
-          sha256sum ./*.zip > SHA256SUMS.txt
+          # 格式必须是 `sha256sum -c` 认识的 `<64位十六进制>  <文件名>`。
+          # **刻意不用 `./*.zip` 通配**：那会让每条记录带上 `./` 前缀（实测 CI 产物
+          # 就是 `./wb2a-server-….zip`），插件按裸文件名查找便落空，结果是所有用户
+          # 都装不上。改成先 cd 进目录、再用裸文件名生成。
+          sha256sum ./*.zip | sed 's|\./||' > SHA256SUMS.txt
           cat SHA256SUMS.txt
-          # 自检：确认清单能被标准工具校验通过（而不是只生成了一个看起来对的文件）。
+          # 自检 1：清单能被标准工具校验通过。
           sha256sum -c SHA256SUMS.txt
+          # 自检 2：**首字段后必须紧跟两个空格 + 裸文件名**，没有 ./ 或路径前缀。
+          if grep -qE '^[0-9a-f]{64}  [./]' SHA256SUMS.txt; then
+            echo "::error::SHA256SUMS.txt 里的文件名带路径前缀，插件会匹配不到"
+            exit 1
+          fi
+          echo "清单格式自检通过（文件名无路径前缀）"
 
       - name: Publish release
         uses: softprops/action-gh-release@v2

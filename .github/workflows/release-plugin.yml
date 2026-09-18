@@ -65,6 +65,11 @@ jobs:
       - name: Pack tarball
         run: |
           # --ignore-scripts：prepack 会再跑一次 tsc，这里已显式构建过。
+          #
+          # mkdir 是必需的：dist/ 被 .gitignore 忽略，全新检出时**不存在**，
+          # 而 `npm pack --pack-destination dist` 不会自己建目录（实测 CI 上
+          # 报 ENOENT 退出 254）。本机之所以没暴露，只是因为本地 dist/ 早就在了。
+          mkdir -p dist
           npm pack --ignore-scripts --pack-destination dist
           ls -l dist
 

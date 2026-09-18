@@ -177,6 +177,39 @@ describe('parseChecksums', () => {
     const table = parseChecksums(`${'AB'.repeat(32)}  x.zip`)
     expect(table.get('x.zip')).toBe('ab'.repeat(32))
   })
+
+  it('文件名带 ./ 前缀时也能用裸名命中（CI 实际产出的就是这个形态）', () => {
+    // 实测：CI 里 `sha256sum ./*.zip` 产出 `./wb2a-server-windows-amd64.zip`。
+    // 不归一会导致查找落空 → 「清单里没有本平台条目」→ 所有用户都装不上。
+    const table = parseChecksums(`${'a'.repeat(64)}  ./wb2a-server-windows-amd64.zip`)
+    expect(table.get('wb2a-server-windows-amd64.zip')).toBe('a'.repeat(64))
+  })
+
+  it('带路径的条目按 basename 也能命中', () => {
+    const table = parseChecksums(`${'b'.repeat(64)}  nested/dir/wb2a-server-linux-amd64.zip`)
+    expect(table.get('wb2a-server-linux-amd64.zip')).toBe('b'.repeat(64))
+  })
+
+  it('不同目录下的同名 basename 有歧义时不登记 basename（避免随机取错一个）', () => {
+    const table = parseChecksums([
+      `${'a'.repeat(64)}  x/dup.zip`,
+      `${'b'.repeat(64)}  y/dup.zip`,
+    ].join('\n'))
+    expect(table.get('dup.zip')).toBeUndefined()
+    expect(table.get('x/dup.zip')).toBe('a'.repeat(64))
+    expect(table.get('y/dup.zip')).toBe('b'.repeat(64))
+  })
+
+  it('真实 CI 产出的清单（多平台 + ./ 前缀）能取到 windows 条目', () => {
+    // 直接抄一份线上 v0.3.0 的 SHA256SUMS.txt 形态，作为回归锁。
+    const table = parseChecksums([
+      `${'1'.repeat(64)}  ./wb2a-server-darwin-amd64.zip`,
+      `${'2'.repeat(64)}  ./wb2a-server-darwin-arm64.zip`,
+      `${'3'.repeat(64)}  ./wb2a-server-linux-amd64.zip`,
+      `${'4'.repeat(64)}  ./wb2a-server-windows-amd64.zip`,
+    ].join('\n'))
+    expect(table.get('wb2a-server-windows-amd64.zip')).toBe('4'.repeat(64))
+  })
 })
 
 describe('GatewayBinaryInstaller.ensure', () => {

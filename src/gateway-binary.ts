@@ -194,18 +194,35 @@ export function checksumsUrl(repo: string, base?: string): string {
 }
 
 /**
- * 解析 `SHA256SUMS.txt`（`sha256sum` 格式：`<64位十六进制><空格><文件名>`）。
+ * 解析 `SHA256SUMS.txt`（`sha256sum` 格式：`<64位十六进制><空白><文件名>`）。
  *
  * 兼容 `sha256sum` 的两空格写法与文件名前导 `*`（二进制模式标记）。
  *
- * @returns 文件名 → 小写十六进制摘要。
+ * **文件名会做路径归一**：CI 里执行的是 `sha256sum ./*.zip`，产出的名字带 `./`
+ * 前缀（实测：`./wb2a-server-windows-amd64.zip`）。若按原名建表，查找
+ * `wb2a-server-windows-amd64.zip` 会落空，表现为「清单里没有本平台条目」而**拒绝
+ * 安装**——即所有用户都装不上。归一规则：去掉前导 `./`，并额外登记 basename
+ * （`sub/dir/x.zip` 也能用 `x.zip` 命中，但**仅在不与该 basename 的已知条目冲突时**，
+ * 避免歧义时随机取一个）。
+ *
+ * @returns 文件名（已归一）→ 小写十六进制摘要。
  */
 export function parseChecksums(text: string): Map<string, string> {
   const out = new Map<string, string>()
+  const basenames = new Map<string, string | undefined>()
   for (const line of text.split(/\r?\n/)) {
     const match = /^([0-9a-fA-F]{64})\s+\*?(.+?)\s*$/.exec(line)
     if (match === null) continue
-    out.set(match[2]!, match[1]!.toLowerCase())
+    const digest = match[1]!.toLowerCase()
+    // 归档在目录里时 sha256sum 会带路径；统一剥掉前导 ./ 与任意多余分隔符。
+    const name = match[2]!.replace(/^\.\//, '')
+    out.set(name, digest)
+    const base = name.split('/').pop() ?? name
+    // 同名 basename 出现两次（不同目录）时置为 undefined 表示"有歧义"，只留全名。
+    basenames.set(base, basenames.has(base) ? undefined : digest)
+  }
+  for (const [base, digest] of basenames) {
+    if (digest !== undefined && !out.has(base)) out.set(base, digest)
   }
   return out
 }
