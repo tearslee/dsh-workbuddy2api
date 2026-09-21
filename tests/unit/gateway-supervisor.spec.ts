@@ -280,4 +280,51 @@ describe('GatewaySupervisor 生命周期', () => {
     expect(status.health?.healthy).toBe(3)
     expect(status.port).toBe(gateway.port)
   })
+
+  it('复用外部网关（external）时 start() 也带回 health', async () => {
+    // 回归：start() 内部已经探活拿到 health（用来决定 running/unhealthy），
+    // 若返回值里丢掉它，调用方就只能看到「运行中」而看不到账号数 ——
+    // 表现为「插件启动时 setup 消息没有账号信息」。
+    const gateway = await startFakeGateway(() => ({
+      status: 200,
+      body: JSON.stringify({ healthy: 2, total: 3, realm_servable: { cn: true, global: false } }),
+    }))
+    cleanups.push(gateway.close)
+    const { runtime } = makeSubprocess()
+    const supervisor = new GatewaySupervisor({
+      config: resolveConfig({ baseURL: `http://127.0.0.1:${gateway.port}/v1` }),
+      subprocess: runtime,
+      logger: silentLogger,
+    })
+
+    const status = await supervisor.start()
+    expect(status.state).toBe('external')
+    expect(status.health?.healthy).toBe(2)
+    expect(status.health?.total).toBe(3)
+  })
+
+  it('启动进行中再次 start() 会等同一轮，而不是回一个没有账号信息的空壳', async () => {
+    // 真实场景：dsh 启动时 autoStart 正在拉起网关，用户紧接着执行 /wb2api-setup。
+    // 第二个调用若走「handle 已存在」的早返回，拿到的快照没有 health。
+    const gateway = await startFakeGateway(() => ({
+      status: 200,
+      body: JSON.stringify({ healthy: 5, total: 5 }),
+    }))
+    cleanups.push(gateway.close)
+    const { runtime, spawns } = makeSubprocess()
+    const binary = join(mkdtempSync(join(tmpdir(), 'wb2api-')), 'wb2a-server.exe')
+    writeFileSync(binary, '')
+    const supervisor = new GatewaySupervisor({
+      config: resolveConfig({ baseURL: `http://127.0.0.1:${gateway.port}/v1`, binaryPath: binary }),
+      subprocess: runtime,
+      logger: silentLogger,
+    })
+
+    // 第一个调用会因为端口上已有健康网关而立刻复用；关键是两个调用拿到同一结果。
+    const [first, second] = await Promise.all([supervisor.start(), supervisor.start()])
+    expect(first.health?.healthy).toBe(5)
+    expect(second.health?.healthy).toBe(5)
+    // 且不该重复 spawn 出第二个网关进程。
+    expect(spawns).toHaveLength(0)
+  })
 })

@@ -239,15 +239,35 @@ function logRouteConflict(ctx: Context, what: string, error: unknown): void {
   )
 }
 
-/** 把状态快照渲染成命令输出文本。 */function renderStatus(status: Awaited<ReturnType<GatewaySupervisor['statusWithHealth']>>, authFiles: number): string {
-  const stateText: Record<string, string> = {
-    stopped: '未运行',
-    external: '复用外部已运行的网关',
-    starting: '启动中',
-    running: '运行中',
-    unhealthy: '运行中（无可用账号）',
-    failed: '失败',
-  }
+/** 网关状态的中文标签（`/wb2api-status` 与启动汇报共用，避免两处文案漂移）。 */
+const STATE_TEXT: Record<string, string> = {
+  stopped: '未运行',
+  external: '复用外部已运行的网关',
+  starting: '启动中',
+  running: '运行中',
+  unhealthy: '运行中（无可用账号）',
+  failed: '失败',
+}
+
+/**
+ * 网关就绪后的一行汇报（自动启动完成时打到日志）。
+ *
+ * 存在的理由：插件注册日志只能说明「打算拉起网关」，而启动本身是异步的。
+ * 没有这条，用户无从判断网关是否真的起来了、有没有账号 —— 账号为 0 时
+ * 更是只能等模型请求失败才发现。这里在**拿到探活结果之后**再报一次。
+ */
+function renderReadySummary(status: Awaited<ReturnType<GatewaySupervisor['statusWithHealth']>>): string {
+  const head = `[workbuddy2api] 网关${STATE_TEXT[status.state] ?? status.state}：${status.baseURL}`
+  if (status.health === undefined) return `${head}（未探到 /healthz）`
+  const realms = status.health.realmServable !== undefined
+    ? `，域 ${Object.entries(status.health.realmServable).map(([realm, ok]) => `${realm}=${ok ? '可用' : '不可用'}`).join(' ')}`
+    : ''
+  return `${head}，账号 ${status.health.healthy}/${status.health.total} 可用${realms}`
+}
+
+/** 把状态快照渲染成命令输出文本。 */
+function renderStatus(status: Awaited<ReturnType<GatewaySupervisor['statusWithHealth']>>, authFiles: number): string {
+  const stateText = STATE_TEXT
   const lines = [
     `状态: ${stateText[status.state] ?? status.state}`,
     `端点: ${status.baseURL}`,
@@ -1029,6 +1049,16 @@ export function apply(ctx: Context, rawConfig?: Partial<GatewayPluginConfig>): v
         const status = await supervisor.start()
         if (status.state === 'failed') {
           ctx.logger.error(`[workbuddy2api] 自动启动失败：${status.lastError ?? '未知原因'}`)
+          return
+        }
+        // 网关就绪后再报一次：启动是异步的，先前的注册日志只能说明「打算拉起」，
+        // 此时才有账号可用性可讲。没有这一条，用户只能看到「已注册」而不知道
+        // 网关到底起没起来、有没有账号（账号为 0 时更是只能靠模型请求失败去猜）。
+        ctx.logger.info(renderReadySummary(status))
+        if (status.health !== undefined && status.health.healthy === 0) {
+          ctx.logger.warn(
+            '[workbuddy2api] 网关已就绪，但没有可用账号 —— 执行 /wb2api-setup 完成登录后即可对话。',
+          )
         }
       })().catch((error: unknown) => {
         ctx.logger.error(

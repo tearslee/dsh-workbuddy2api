@@ -113,6 +113,34 @@ export class GatewaySupervisor {
   private restarts = 0
   private lastError: string | undefined
   private resolvedBinary: string | undefined
+  /**
+   * 最近一次探活结果。
+   *
+   * 缓存它是因为 `start()` / `restart()` 内部**已经**探过一次活（用来决定
+   * `running` / `unhealthy`），返回值却只给 `status()` —— 那份快照不含 `health`，
+   * 于是调用方拿不到账号数（症状：「插件启动时 setup 消息没有账号信息」）。
+   * 存下来由 {@link status} 一并带出，避免启动路径再补一次多余的探活。
+   */
+  private health: HealthReport | undefined
+  /**
+   * 正在进行中的启动。
+   *
+   * dsh 启动时插件会自动拉起网关（`autoStart`），而用户往往紧接着执行
+   * `/wb2api-setup` 或 `/wb2api-start` —— 两个调用会撞在同一段时间里。
+   * 没有这个字段时，第二次调用会走到 `handle !== undefined` 的早返回，
+   * 拿到的是一份**还没有探活结果**的快照，报告里因此缺账号信息。
+   * 有它则第二个调用直接等同一轮启动，拿到完整结果。
+   */
+  private inFlightStart: Promise<GatewayStatus> | undefined
+  /**
+   * 启动代际。
+   *
+   * 每次 `stop()` 递增，使**已经在跑的那一轮启动作废**：`/wb2api-account` 的顺序是
+   * 「停 → 改名 → 启」，改名必须发生在进程真正停掉之后；若旧启动还活着，它会继续
+   * 探活并写 `state` / `handle`，把改名夹在启动中间（表现为切换后账号集不对）。
+   * `bringUp()` 在关键节点比对自己那一代的号，过期就直接放弃，不再改状态。
+   */
+  private startGeneration = 0
   private restartTimer: ReturnType<typeof setTimeout> | undefined
   /** 显式停止标志：抑制「进程退出 → 自动重启」的联动。 */
   private stopping = false
@@ -296,10 +324,34 @@ export class GatewaySupervisor {
    *  - 端口被非网关程序占用 → 抛错。
    *  - 端口空闲 → 解析二进制并 spawn，随后轮询 `/healthz` 直到就绪或超时。
    *
-   * @returns 启动后的状态快照。
+   * **并发调用会等待同一次启动**（见 {@link inFlightStart}）：dsh 启动时的自动
+   * 拉起与用户紧接着执行的 `/wb2api-setup` 会撞在一起，若第二个调用直接返回
+   * 「启动中」的半成品快照，报告里就不会有账号信息。
+   *
+   * @returns 启动后的状态快照（含探活结果）。
    */
   async start(): Promise<GatewayStatus> {
+    // 已有一轮启动在跑：等它，而不是回一个「启动中」的空壳。
+    if (this.inFlightStart !== undefined) return this.inFlightStart
     if (this.handle !== undefined || this.state === 'external') return this.status()
+
+    const pending = this.bringUp()
+    this.inFlightStart = pending
+    try {
+      return await pending
+    } finally {
+      // 只清掉**自己那一轮**：`stop()` 会把标记置空以便新一轮启动立即落位，
+      // 若无条件清除，A 轮结束时会把 B 轮的标记抹掉，第三个调用又会拿到空壳快照。
+      if (this.inFlightStart === pending) this.inFlightStart = undefined
+    }
+  }
+
+  /** {@link start} 的实际启动流程（已被并发去重包裹）。 */
+  private async bringUp(): Promise<GatewayStatus> {
+    const generation = this.startGeneration
+    /** 本轮是否已被 stop() 作废。 */
+    const stale = (): boolean => generation !== this.startGeneration
+
     this.stopping = false
     this.state = 'starting'
     this.lastError = undefined
@@ -307,14 +359,21 @@ export class GatewaySupervisor {
     // 1. 先探：已有健康网关就直接复用。
     try {
       const existing = await this.probe()
+      // 探活期间被 stop() 作废（如 /wb2api-account 正在改名）：不要写任何状态，
+      // 否则会给一个已经决定停掉的网关标上 external。
+      if (stale()) return this.status()
       if (existing !== undefined) {
         this.state = 'external'
         this.options.logger.info(
           `[workbuddy2api] 复用已在 ${this.origin} 运行的网关（healthy=${existing.healthy}/${existing.total}）`,
         )
+        // 把刚探到的结果带进返回值：调用方（/wb2api-setup、/wb2api-start、自动启动）
+        // 都靠 status.health 汇报账号可用性，丢掉它就只能显示「运行中」而没有账号数。
+        this.health = existing
         return this.status()
       }
     } catch (error) {
+      if (stale()) return this.status()
       this.state = 'failed'
       this.lastError = error instanceof Error ? error.message : String(error)
       throw error
@@ -322,6 +381,7 @@ export class GatewaySupervisor {
 
     // 2. 拉起受管进程。
     const argv0 = await this.resolveBinary()
+    if (stale()) return this.status()
     const cwd = this.resolveWorkingDir(argv0)
 
     this.options.logger.info(`[workbuddy2api] 启动网关：${argv0}（cwd=${cwd}）`)
@@ -343,6 +403,8 @@ export class GatewaySupervisor {
 
     // 3. 轮询探活，等网关真正可用。
     const health = await this.waitForHealth(handle)
+    // 探活期间被 stop() 作废：进程可能已被销毁，不能再用这轮结果写状态。
+    if (stale()) return this.status()
     if (health === undefined) {
       this.state = 'failed'
       // 子进程若已退出，watchExit 已经写下更准确的病因（退出码/信号），不要覆盖它。
@@ -352,6 +414,7 @@ export class GatewaySupervisor {
     }
 
     this.state = health.healthy > 0 ? 'running' : 'unhealthy'
+    this.health = health
     if (health.healthy === 0) {
       // 进程活着但没账号：明确告知，而不是假装成功。
       const authFiles = this.countAuthFiles()
@@ -445,6 +508,11 @@ export class GatewaySupervisor {
    */
   async stop(): Promise<void> {
     this.stopping = true
+    // 作废进行中的启动：`/wb2api-account` 是「停 → 改名 → 启」，改名必须发生在
+    // 进程真正停掉之后。递增代际会让旧的 bringUp() 在下一个检查点放弃，
+    // 不再写 state / handle（否则会把改名夹在启动中间，切换后账号集不对）。
+    this.startGeneration += 1
+    this.inFlightStart = undefined
     if (this.restartTimer !== undefined) {
       clearTimeout(this.restartTimer)
       this.restartTimer = undefined
@@ -467,7 +535,6 @@ export class GatewaySupervisor {
     this.restarts = 0
     return this.start()
   }
-
   /** 当前状态快照。 */
   status(): GatewayStatus {
     const stderr = this.handle?.collected.stderr?.readFrom(0).text
@@ -476,6 +543,7 @@ export class GatewaySupervisor {
       baseURL: this.options.config.baseURL,
       port: this.port,
       ...this.resolvedBinary !== undefined ? { binaryPath: this.resolvedBinary } : {},
+      ...this.health !== undefined ? { health: this.health } : {},
       ...this.lastError !== undefined ? { lastError: this.lastError } : {},
       restarts: this.restarts,
       ...stderr !== undefined && stderr.length > 0 ? { recentStderr: stderr.slice(-2000) } : {},
@@ -489,6 +557,8 @@ export class GatewaySupervisor {
     try {
       const health = await this.probe()
       if (health !== undefined) {
+        // 实时结果覆盖缓存（缓存只是「上次启动时看到的」，可能已过期）。
+        this.health = health
         return { ...base, health, state: base.state === 'stopped' ? 'external' : base.state }
       }
     } catch (error) {
