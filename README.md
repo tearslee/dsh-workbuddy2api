@@ -100,7 +100,25 @@ dsh plugin --profile web add file:./dist/dsh-workbuddy2api-0.3.0.tgz
 
 > **关于 npm registry**：本包**尚未发布到 npm**，因此 `dsh plugin add dsh-workbuddy2api` 会 404 —— 请用上面三种方式之一。发布后会更新这里。
 
-**装完重启 dsh**，然后在 dsh 里执行：
+### 装完必须重启一次 dsh（为什么）
+
+`dsh plugin add` 只做两件事：把包装进 `~/.dsh/profiles/<profile>/node_modules/`，以及把包名加进该 profile 的 `dsh.profile.bundles`。**正在运行的 dsh 进程不会重新读取这个列表** —— `bundles` 只在启动时解析一次，插件的代码是那时被 `import` 进进程的。
+
+所以：**装完请重启 dsh**（关闭再启动），插件与它的 `workbuddy2api` provider 才会出现。这不是本插件的缺陷，而是 dsh 加载模型决定的 —— 新代码还没进进程，插件自己也没有机会运行。
+
+重启后执行 `/wb2api-setup` 完成初始化。
+
+#### 关于免重启安装
+
+dsh 的 profile 补丁层本身是**热重载**的（`web` profile 的 `patchReload` 为 `live`），已有插件能通过宿主的热挂载能力在运行中生效。但**新装的包不行**：`dsh plugin add` 是纯磁盘操作，而运行中的进程里没有任何存活代码会去 `import` 这个新包。
+
+若你的 profile 里装了 [`dshmarket`](https://www.npmjs.com/package/dshmarket)，它具备在运行中热挂载插件的能力（`hotMount`）—— 前提是该插件**已在其收录的 registry 里**（它的安装入口只接受收录过的来源，不接受任意 URL）。本插件暂未收录，因此目前请按上面的方式安装并重启一次。
+
+> 让本插件支持免重启安装是可行的（把插件提交到 dshmarket 的收录列表，或做适配），但那是另一项工作。
+
+---
+
+dsh 起来之后，在对话里执行：
 
 ```
 /wb2api-setup
