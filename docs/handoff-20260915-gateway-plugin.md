@@ -4,7 +4,7 @@
 |---|---|
 | 状态 | **已实施**（本文档是 2026-09-15 的方案与调研记录，代码已按此落地） |
 | 目标产物 | 独立发布的 dsh 插件 `dsh-workbuddy2api` |
-| 上游依赖 | [Sliverkiss/workbuddy2api](https://github.com/Sliverkiss/workbuddy2api)（Go，MIT，**只消费不改**） |
+| 上游依赖 | [HanawaBanana/workbuddy2api](https://github.com/HanawaBanana/workbuddy2api)（Go，MIT，**只消费不改**）<br>⚠️ 本文档 2026-09-15 撰写时上游为 `Sliverkiss/workbuddy2api`，该仓库**已于 2026-09 被作者删库**（404）；沿用链接已失效，故改指延续仓库。 |
 | 工程骨架来源 | `deepseek-harness-codearts`（gitee.com/iJetLi/deepseek-harness-codearts）的 buddy provider 构建链 |
 | 环境 | dsh `0.1.6-alpha.1`（单份全局安装，`<dsh 安装目录>/node_modules/@deepseek-ai/dsh`）|
 

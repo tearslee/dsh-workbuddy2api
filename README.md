@@ -1,6 +1,6 @@
 # dsh-workbuddy2api
 
-**把 [workbuddy2api](https://github.com/Sliverkiss/workbuddy2api) 网关接进 [DeepSeek Harness（dsh）](https://www.npmjs.com/package/@deepseek-ai/dsh) 的插件。**
+**把 [workbuddy2api](https://github.com/HanawaBanana/workbuddy2api) 网关接进 [DeepSeek Harness（dsh）](https://www.npmjs.com/package/@deepseek-ai/dsh) 的插件。**
 
 装上之后：
 
@@ -50,6 +50,16 @@
 ---
 
 ## 前置条件
+
+> **⚠️ 上游仓库已删库（2026-09-30 确认，CI 已迁走）**：原 `Sliverkiss/workbuddy2api` 现已 **404**（并非改名重定向）。
+> 延续仓库为 [`HanawaBanana/workbuddy2api`](https://github.com/HanawaBanana/workbuddy2api)（MIT，描述明确写着"原 Sliverkiss/workbuddy2api 已删库"）。
+>
+> - `release-binaries` 工作流已改为从**延续仓库**构建，并把 ref **钉死**在
+>   `UPSTREAM_REF = 1c9aef9ab378217316ee2ddff7eace78381b46c0`（2026-09-20）—— 这正是
+>   已发布二进制内嵌的 `vcs.revision`（可用 `go version -m wb2a-server.exe` 复核），
+>   因此重新构建出的产物与既有版本**同源、可复现**。
+> - 升级上游时改工作流里的那一行即可；**不要改回 `Sliverkiss/...`**，那个仓库已不存在。
+> - 本机开发时若自行 `git clone`，同样应 clone 延续仓库。
 
 1. **dsh**，全局安装：
 

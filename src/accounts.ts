@@ -3,7 +3,7 @@
  *
  * ## 为什么用文件改名，而不是让网关开个接口
  *
- * 网关（upstream Sliverkiss/workbuddy2api）只暴露四个路由 —— `POST /v1/chat/completions`、
+ * 网关（upstream HanawaBanana/workbuddy2api，原 Sliverkiss/workbuddy2api 已于 2026-09 删库）只暴露四个路由 —— `POST /v1/chat/completions`、
  * `GET /v1/models`、`GET /status`、`GET /healthz`（`internal/server/handler.go:101-104`），
  * 没有任何账号管理端点，config 里也没有账号级开关（账号优先级完全由池内三因子加权决定）。
  * 但它加载账号的 glob 是 `workbuddy*.json`（`internal/auth/auth.go:328`），

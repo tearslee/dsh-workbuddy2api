@@ -1,12 +1,23 @@
 # 从上游源码交叉编译 workbuddy2api 网关，并作为 Release 产物发布。
 #
 # 为什么由本仓库发布二进制（而不是让用户自己装 Go 编译）：
-#   上游 Sliverkiss/workbuddy2api 明确不提供预编译 release，而「装 Go + git clone +
+#   上游 workbuddy2api 明确不提供预编译 release，而「装 Go + git clone +
 #   go build」是插件用户能遇到的最高门槛。产物是**从上游源码原样编译**出来的，
 #   本仓库不修改上游一行代码（见下方 patch 校验步骤），许可证与来源仍归上游。
 #
+# ⚠️ 上游仓库变更（2026-09-30 确认）：
+#   原始仓库 Sliverkiss/workbuddy2api 已被作者**删库**（GitHub 返回 404，且不是改名
+#   重定向），导致本工作流的 4 个平台 job 全部卡在 "Checkout upstream gateway source"，
+#   v0.3.2 的 release 因此只挂上了插件 tgz 而缺失网关二进制 —— 而插件默认从
+#   `releases/latest/download/...` 取产物，于是全体用户的 /wb2api-setup 都会 404。
+#
+#   现在改用延续仓库 HanawaBanana/workbuddy2api（MIT，其自述明确写着「原
+#   Sliverkiss/workbuddy2api 已删库」），并把 ref **钉死**到 UPSTREAM_REF。
+#   钉死的理由：v0.3.1 那批已发布二进制内嵌的 vcs.revision 就是该 commit，
+#   钉住它才能保证「重新构建出来的产物与 v0.3.1 同源、可复现」，不受上游后续变更影响。
+#
 # 触发方式：
-#   - push tag `v*`（例如 v0.3.0）→ 构建并发布 Release，插件默认从
+#   - push tag `v*`（例如 v0.3.2）→ 构建并发布 Release，插件默认从
 #     `releases/latest/download/...` 取产物，因此无需把版本号烧进插件代码；
 #   - 手动 workflow_dispatch → 只构建并上传 artifact，便于验证（不建 Release）。
 #
@@ -22,7 +33,7 @@ on:
   workflow_dispatch:
     inputs:
       upstream_ref:
-        description: '上游 workbuddy2api 的 ref（分支/tag/commit）；留空用 master'
+        description: '上游 workbuddy2api 的 ref（分支/tag/commit）；留空用 UPSTREAM_REF'
         required: false
         default: ''
 
@@ -31,7 +42,12 @@ permissions:
 
 env:
   # 上游仓库与要构建的包（与 README 里给用户的命令一致：go build -o wb2a-server ./cmd/server）。
-  UPSTREAM_REPO: Sliverkiss/workbuddy2api
+  # 原 Sliverkiss/workbuddy2api 已删库 → 指向延续仓库。
+  UPSTREAM_REPO: HanawaBanana/workbuddy2api
+  # 钉死的上游 revision：与已发布的 v0.3.1 二进制内嵌的 vcs.revision 完全一致
+  # （go version -m wb2a-server.exe → vcs.revision=1c9aef9a…、vcs.modified=false）。
+  # 升级上游时改这一行，并在 release notes 里记录新的 revision。
+  UPSTREAM_REF: 1c9aef9ab378217316ee2ddff7eace78381b46c0
   GO_VERSION: '1.26.x'
 
 jobs:
@@ -62,8 +78,9 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: ${{ env.UPSTREAM_REPO }}
-          # 固定到构建时可验证的提交；workflow_dispatch 时也可手工指定。
-          ref: ${{ github.event.inputs.upstream_ref || 'master' }}
+          # 钉死到与 v0.3.1 同源的提交（见文件头 UPSTREAM_REF 说明）；
+          # workflow_dispatch 时可手工覆盖以便验证其它 ref。
+          ref: ${{ github.event.inputs.upstream_ref || env.UPSTREAM_REF }}
           path: upstream
 
       - name: Record upstream revision
@@ -177,6 +194,9 @@ jobs:
             预编译的 **workbuddy2api 网关**二进制，由本仓库的 GitHub Actions
             从上游 [${{ env.UPSTREAM_REPO }}](https://github.com/${{ env.UPSTREAM_REPO }})
             源码交叉编译产生（未修改上游代码）。
+
+            构建所依据的上游 revision 见本工作流 `UPSTREAM_REF`（原
+            `Sliverkiss/workbuddy2api` 已删库，故改用延续仓库并钉死 commit）。
 
             通常**不需要手工下载**：dsh 插件 `dsh-workbuddy2api` 的 `/wb2api-setup`
             会自动取用 `releases/latest/download/` 下的产物并校验 SHA256。

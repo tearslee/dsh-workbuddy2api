@@ -332,7 +332,7 @@ export class GatewayBinaryInstaller {
     if (detected === undefined) {
       throw new Error(
         `workbuddy2api: 没有适配 ${process.platform}/${process.arch} 的预编译产物。`
-        + '请自行编译：git clone https://github.com/Sliverkiss/workbuddy2api'
+        + '请自行编译：git clone https://github.com/HanawaBanana/workbuddy2api'
         + ' && go build -o wb2a-server ./cmd/server，然后把插件配置 binaryPath 指向它。',
       )
     }
@@ -403,7 +403,7 @@ export class GatewayBinaryInstaller {
       throw new Error(
         `workbuddy2api: 无法获取校验和清单（${error instanceof Error ? error.message : String(error)}）。`
         + '出于安全考虑，未校验的二进制不会被安装。\n'
-        + '替代方案：自行编译网关（git clone https://github.com/Sliverkiss/workbuddy2api'
+        + '替代方案：自行编译网关（git clone https://github.com/HanawaBanana/workbuddy2api'
         + ' && go build -o wb2a-server ./cmd/server），并在插件配置里指定 binaryPath。',
       )
     }

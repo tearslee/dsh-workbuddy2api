@@ -23,13 +23,15 @@
 
 <img src="https://raw.githubusercontent.com/tearslee/dsh-workbuddy2api/main/docs/images/after-pr-fixed-2.png" alt="修复后：用量明细按轮聚合" width="100%">
 
-（截图取自上游 issue [#35](https://github.com/Sliverkiss/workbuddy2api/issues/35) 与 [#69](https://github.com/Sliverkiss/workbuddy2api/issues/69)。）
+（截图取自上游 issue `#35` 与 `#69`。）
+
+> **链接说明（2026-09-30）**：上述 issue/PR 原属 `Sliverkiss/workbuddy2api`，该仓库已被作者**删库**（GitHub 返回 404，并非改名重定向），因此原链接**全部失效**。延续仓库为 [`HanawaBanana/workbuddy2api`](https://github.com/HanawaBanana/workbuddy2api)（MIT），但**历史编号在两个仓库间不保证对应**，故本文只保留编号、不再给可点击链接，仅作溯源参考。
 
 ## 这个 bug 是怎么修的
 
 1. **上游先加会话头族**（`X-Conversation-ID` / `X-Conversation-Request-ID` / `X-Request-ID` / B3 trace 族），后台改按 `X-Conversation-Request-ID` 聚合。
 2. **但没修好** —— 因为 OpenAI 兼容客户端（dsh / Codex / Cherry Studio）的请求体里**既无 `conversationId` 也无 `metadata`**，网关的 `ExtractKey` 恒返回空串，聚合主键只能逐请求新生成。当时的截图（issue #69 里回复「更新后我发现其实还是多个请求」）：见上方 **②**。
-3. **本仓库作者提交的 [PR #73](https://github.com/Sliverkiss/workbuddy2api/pull/73)（已合并）** 补上了缺失的那一层：为**无会话键客户端**增加「对话轮级」兜底聚合键：
+3. **本仓库作者提交的 PR `#73`（已合并，原链接已失效）** 补上了缺失的那一层：为**无会话键客户端**增加「对话轮级」兜底聚合键：
 
    ```
    TurnKey(body) = body 里最后一条 role=="user" 消息的「序号:文本」

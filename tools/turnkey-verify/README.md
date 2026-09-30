@@ -2,8 +2,8 @@
 
 ## 它验证什么
 
-上游 [workbuddy2api](https://github.com/Sliverkiss/workbuddy2api) 的 PR #73（本仓库作者提交，
-已合并）为**无会话键的 OpenAI 兼容客户端**补了「对话轮级」兜底聚合键，修掉了
+上游 [workbuddy2api](https://github.com/HanawaBanana/workbuddy2api) 的 PR #73（本仓库作者提交，
+已合并；原属 `Sliverkiss/workbuddy2api`，该库**已于 2026-09 删库**，故原链接失效、编号仅作溯源）为**无会话键的 OpenAI 兼容客户端**补了「对话轮级」兜底聚合键，修掉了
 issue #35 / #69 的 RequestID 碎片化。背景见
 [轮级聚合](../../docs/turn-level-aggregation.md)。
 
