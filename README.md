@@ -57,7 +57,13 @@
    npm i -g @deepseek-ai/dsh
    ```
 
-   本插件在 dsh `0.1.6-alpha.1` 上验证通过；`package.json` 声明的兼容区间是 `>=0.1.2-rc.1 <0.2.0-0`。
+   本插件在 dsh `0.2.0-rc.2` 上验证通过；`package.json` 声明的兼容区间是
+   `>=0.1.2-rc.1 <0.2.0-0 || >=0.2.0-rc.1 <0.3.0-0`（前一段覆盖 `0.1.x`，后一段覆盖 `0.2.x`）。
+
+   > 装插件时 dsh 会拿**运行时的 dsh 版本**去比对这个区间（`dsh-app-boot` 的
+   > `evaluatePluginCompatibility`，内部用 `semver.satisfies(version, range, { includePrerelease: true })`）。
+   > 因此 `0.2.0-rc.2` 这类预发布版本也能正确命中 —— 这一点很容易踩坑：若按普通 semver 语义
+   > 写 `>=0.1.2-rc.1 <0.2.0-0`，它反而**匹配不上任何 `0.1.7+` 预发布版**，安装会被拒绝并回滚。
 
 2. **一个 WorkBuddy 账号**（国内外账号体系相互独立，选你有的那个）。
 
@@ -72,7 +78,7 @@
 **不需要先下载文件** —— pnpm 支持直接以 Release 的 tarball URL 作为依赖（已实测：装出来是真实目录、非 `link:`）：
 
 ```bash
-dsh plugin --profile web add https://github.com/tearslee/dsh-workbuddy2api/releases/download/v0.3.0/dsh-workbuddy2api-0.3.0.tgz
+dsh plugin --profile web add https://github.com/tearslee/dsh-workbuddy2api/releases/download/v0.3.2/dsh-workbuddy2api-0.3.2.tgz
 ```
 
 升级时把 URL 里的版本号换掉即可。
@@ -82,7 +88,7 @@ dsh plugin --profile web add https://github.com/tearslee/dsh-workbuddy2api/relea
 在 [Releases](https://github.com/tearslee/dsh-workbuddy2api/releases/latest) 下载 `dsh-workbuddy2api-<版本>.tgz`，然后：
 
 ```bash
-dsh plugin --profile web add file:/绝对路径/dsh-workbuddy2api-0.3.0.tgz
+dsh plugin --profile web add file:/绝对路径/dsh-workbuddy2api-0.3.2.tgz
 ```
 
 ### 方式三：从源码安装
@@ -93,12 +99,22 @@ cd dsh-workbuddy2api
 npm install
 node node_modules/typescript/bin/tsc -p tsconfig.json   # 必须先构建出 lib/
 npm pack --pack-destination dist
-dsh plugin --profile web add file:./dist/dsh-workbuddy2api-0.3.0.tgz
+dsh plugin --profile web add file:./dist/dsh-workbuddy2api-0.3.2.tgz
 ```
 
 > **不要用 `dsh plugin install <源码目录>`**：pnpm 会写成 `link:` 依赖，而 Windows 上工具进程创建的 junction 不可遍历，会导致 pnpm 全面失效。用 `npm pack` / `pnpm pack` 出的 tarball（解包成真实目录）可规避。
 
-> **关于 npm registry**：本包**尚未发布到 npm**，因此 `dsh plugin add dsh-workbuddy2api` 会 404 —— 请用上面三种方式之一。发布后会更新这里。
+> **关于 npm registry（重要，别装错）**：npm 上的 **`dsh-workbuddy2api` 这个包名已被他人占用**
+> —— 发布者是 [Boiser](https://www.npmjs.com/~boiser)，线上版本为 `0.4.9` ~ `0.6.8`（`latest = 0.6.8`），
+> 与本仓库（`tearslee/dsh-workbuddy2api`，当前 `0.3.2`）**不是同一个项目**。
+>
+> 因此：
+>
+> - ❌ **不要执行 `dsh plugin add dsh-workbuddy2api`** —— 它会装到那个同名包，而不是本插件；
+> - ✅ 请用上面三种方式之一，从**本仓库的 GitHub Release** 取 `dsh-workbuddy2api-<版本>.tgz`；
+> - 装完请核对来源与版本：本仓库的版本线是 `0.1.x` / `0.3.x`（`0.4.x` 及以上均非本仓库产物）。
+>
+> 本仓库未在 npm 发布，也无意与同名包竞争该名称 —— 安装时**认 URL / 认 tarball**，不要只认包名。
 
 ### 装完必须重启一次 dsh（为什么）
 

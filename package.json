@@ -1,6 +1,6 @@
 {
   "name": "dsh-workbuddy2api",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "DeepSeek Harness plugin: supervise a local workbuddy2api gateway process and auto-register its models as an LLM provider",
   "type": "module",
   "main": "lib/index.js",
@@ -44,9 +44,9 @@
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.2",
-    "@deepseek-ai/dsh-commands": ">=0.1.2-rc.1 <0.2.0-0",
-    "@deepseek-ai/dsh-llm": ">=0.1.2-rc.1 <0.2.0-0",
-    "@deepseek-ai/dsh-subprocess": ">=0.1.2-rc.1 <0.2.0-0",
+    "@deepseek-ai/dsh-commands": ">=0.1.2-rc.1 <0.2.0-0 || >=0.2.0-rc.1 <0.3.0-0",
+    "@deepseek-ai/dsh-llm": ">=0.1.2-rc.1 <0.2.0-0 || >=0.2.0-rc.1 <0.3.0-0",
+    "@deepseek-ai/dsh-subprocess": ">=0.1.2-rc.1 <0.2.0-0 || >=0.2.0-rc.1 <0.3.0-0",
     "@deepseek-ai/schemastery": "^3.18.0"
   },
   "devDependencies": {
